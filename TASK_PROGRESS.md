@@ -30,6 +30,16 @@
   - `backend/.env.docker.example`
 - 新增临时公网访问说明：
   - `DOCKER_TUNNEL.md`
+- 已初始化 Git 仓库并推送到 GitHub 私有仓库：
+  - `https://github.com/XZ-1-sc/xingce-smartbrain`
+  - 默认分支：`main`
+  - 初始提交：`f303d60`
+- 已新增 GitHub Actions Docker 检查：
+  - `.github/workflows/docker-build.yml`
+  - 推送到 `main` 或 PR 时会在 GitHub runner 上检查 Python/JS 语法、解析 Compose、构建后端 Docker 镜像
+- 已确认真实密钥文件没有被提交：
+  - `backend/.env` 处于 Git ignored 状态
+  - 远端只包含 `backend/.env.example` 和 `backend/.env.docker.example`
 
 ## 检查结果
 
@@ -40,6 +50,8 @@
 - `docker compose config --quiet`：通过
 - 首次 `docker compose build backend`：Docker Desktop 未启动，已由 Codex 启动
 - 再次 `docker compose build backend`：通过，已成功生成 `xingce-smartbrain-backend:latest`
+- GitHub 推送：通过
+- GitHub Actions `Docker Checks`：已触发，运行地址在仓库 Actions 页面
 
 ## 下一步
 
