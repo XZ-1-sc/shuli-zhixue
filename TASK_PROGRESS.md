@@ -85,3 +85,18 @@
 - 不要把真实数据库密码写进仓库文件。
 - 如果 Docker 后端连不上 MySQL，优先检查 `backend/.env`、`DOCKER_DATABASE_URL` 和 MySQL 用户权限。
 - 如果 Cloudflare Tunnel 无法拉取镜像或访问，可切换 cpolar。
+
+## 2026-07-14 Docker 收尾验证
+
+- Docker Engine：已启动并可用
+- 容器状态：`backend`、`gateway`、`tunnel` 均为 `Up`
+- 本机入口：`http://localhost:8080/` 返回首页 HTML
+- 健康检查：`http://localhost:8080/api/health` 返回 `{"status":"ok"}`
+- 登录接口：`树虫 / 123456` 登录成功
+- Cloudflare Tunnel：`https://receiver-minneapolis-trusted-darwin.trycloudflare.com`
+- 公网健康检查：`/api/health` 返回 `{"status":"ok"}`
+- 公网首页：返回首页 HTML
+- GitHub 仓库：`https://github.com/XZ-1-sc/xingce-smartbrain`
+- GitHub Actions：`Docker Checks` 最新运行成功
+- 远端密钥检查：仅包含 `.env.example` 文件，未跟踪真实 `backend/.env`
+- 当前策略：保持 Docker 服务和 tunnel 运行，不执行 `docker compose down`，不执行 Docker 清理
