@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# Node / frontend
+node_modules/
+dist/
+build/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local runtime and generated artifacts
+tmp/
+*.log
+.agents/
+garden-gpt-image-2/
+.git.empty-backup-*/
+
+# Secrets and machine-local config
+.env
+.env.*
+backend/.env
+backend/.env.*
+!*.env.example
+!backend/.env.example
+!backend/.env.docker.example
+
+# Docker local state
+docker-data/

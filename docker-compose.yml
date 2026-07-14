@@ -1,0 +1,38 @@
+name: xingce-smartbrain
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    env_file:
+      - path: ./backend/.env
+        required: false
+    environment:
+      XINGCE_DOCKER: "1"
+      DOCKER_DATABASE_URL: ${DOCKER_DATABASE_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    expose:
+      - "8000"
+    restart: unless-stopped
+
+  gateway:
+    image: nginx:1.27-alpine
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    restart: unless-stopped
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles:
+      - tunnel
+    depends_on:
+      - gateway
+    command: tunnel --no-autoupdate --url http://gateway:80
+    restart: "no"

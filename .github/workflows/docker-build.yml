@@ -1,0 +1,48 @@
+name: Docker Checks
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  docker-checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Create CI env file
+        run: |
+          cat > backend/.env <<'EOF'
+          DATABASE_URL=mysql+pymysql://root:password@host.docker.internal:3306/xingce
+          LLM_API_KEY=
+          LLM_BASE_URL=https://api.deepseek.com/v1
+          EOF
+
+      - name: Python syntax check
+        run: python -m compileall -q backend scripts
+
+      - name: Frontend syntax check
+        run: |
+          node --check frontend/static/js/main.js
+          node --check frontend/static/js/plan.js
+          node --check frontend/static/js/practice.js
+
+      - name: Compose config check
+        run: docker compose config --quiet
+
+      - name: Build backend image
+        run: docker compose build backend

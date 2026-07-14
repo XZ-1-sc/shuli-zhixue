@@ -1,0 +1,569 @@
+{
+  "meta": {
+    "name": "行测知识图谱",
+    "author": "Codex",
+    "version": "1.0",
+    "description": "面向公务员考试行政职业能力测验的三级知识图谱，适配网页版思维导图树形 JSON。"
+  },
+  "format": "node_tree",
+  "data": {
+    "id": "root",
+    "topic": "行测知识图谱",
+    "level": 0,
+    "children": [
+      {
+        "id": "module-verbal",
+        "topic": "言语理解与表达",
+        "level": 1,
+        "children": [
+          {
+            "id": "verbal-cloze",
+            "topic": "逻辑填空",
+            "level": 2,
+            "children": [
+              {
+                "id": "verbal-cloze-context",
+                "topic": "语境呼应"
+              },
+              {
+                "id": "verbal-cloze-collocation",
+                "topic": "固定搭配"
+              },
+              {
+                "id": "verbal-cloze-synonym",
+                "topic": "近义词辨析"
+              },
+              {
+                "id": "verbal-cloze-emotion",
+                "topic": "感情色彩"
+              },
+              {
+                "id": "verbal-cloze-register",
+                "topic": "语体风格"
+              }
+            ]
+          },
+          {
+            "id": "verbal-main-idea",
+            "topic": "片段阅读",
+            "level": 2,
+            "children": [
+              {
+                "id": "verbal-main-idea-topic",
+                "topic": "主旨概括"
+              },
+              {
+                "id": "verbal-main-idea-intent",
+                "topic": "意图判断"
+              },
+              {
+                "id": "verbal-main-idea-detail",
+                "topic": "细节理解"
+              },
+              {
+                "id": "verbal-main-idea-attitude",
+                "topic": "态度观点"
+              }
+            ]
+          },
+          {
+            "id": "verbal-sentence",
+            "topic": "语句表达",
+            "level": 2,
+            "children": [
+              {
+                "id": "verbal-sentence-order",
+                "topic": "语句排序"
+              },
+              {
+                "id": "verbal-sentence-fill",
+                "topic": "语句填入"
+              },
+              {
+                "id": "verbal-sentence-connect",
+                "topic": "承接连贯"
+              },
+              {
+                "id": "verbal-sentence-topic",
+                "topic": "话题一致"
+              }
+            ]
+          },
+          {
+            "id": "verbal-title",
+            "topic": "标题与下文",
+            "level": 2,
+            "children": [
+              {
+                "id": "verbal-title-title",
+                "topic": "标题提炼"
+              },
+              {
+                "id": "verbal-title-next",
+                "topic": "下文推断"
+              },
+              {
+                "id": "verbal-title-structure",
+                "topic": "行文脉络"
+              },
+              {
+                "id": "verbal-title-keyword",
+                "topic": "关键词定位"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "module-judgment",
+        "topic": "判断推理",
+        "level": 1,
+        "children": [
+          {
+            "id": "judgment-logic",
+            "topic": "逻辑判断",
+            "level": 2,
+            "children": [
+              {
+                "id": "judgment-logic-strengthen-weaken-cause",
+                "topic": "加强削弱：因果倒置"
+              },
+              {
+                "id": "judgment-logic-strengthen-weaken-sample",
+                "topic": "加强削弱：样本偏差"
+              },
+              {
+                "id": "judgment-logic-assumption-bridge",
+                "topic": "前提假设：搭桥补漏"
+              },
+              {
+                "id": "judgment-logic-translate-condition",
+                "topic": "翻译推理：充分必要"
+              },
+              {
+                "id": "judgment-logic-explain-contradiction",
+                "topic": "解释评价：矛盾解释"
+              }
+            ]
+          },
+          {
+            "id": "judgment-definition",
+            "topic": "定义判断",
+            "level": 2,
+            "children": [
+              {
+                "id": "judgment-definition-subject",
+                "topic": "主体要件"
+              },
+              {
+                "id": "judgment-definition-object",
+                "topic": "客体对象"
+              },
+              {
+                "id": "judgment-definition-condition",
+                "topic": "条件限定"
+              },
+              {
+                "id": "judgment-definition-result",
+                "topic": "结果目的"
+              },
+              {
+                "id": "judgment-definition-multi",
+                "topic": "多定义匹配"
+              }
+            ]
+          },
+          {
+            "id": "judgment-analogy",
+            "topic": "类比推理",
+            "level": 2,
+            "children": [
+              {
+                "id": "judgment-analogy-semantics",
+                "topic": "语义关系"
+              },
+              {
+                "id": "judgment-analogy-logic",
+                "topic": "逻辑关系"
+              },
+              {
+                "id": "judgment-analogy-grammar",
+                "topic": "语法关系"
+              },
+              {
+                "id": "judgment-analogy-experience",
+                "topic": "经验常识"
+              }
+            ]
+          },
+          {
+            "id": "judgment-graphic",
+            "topic": "图形推理",
+            "level": 2,
+            "children": [
+              {
+                "id": "judgment-graphic-position",
+                "topic": "位置规律"
+              },
+              {
+                "id": "judgment-graphic-quantity",
+                "topic": "数量规律"
+              },
+              {
+                "id": "judgment-graphic-attribute",
+                "topic": "属性规律"
+              },
+              {
+                "id": "judgment-graphic-space",
+                "topic": "空间重构"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "module-data",
+        "topic": "资料分析",
+        "level": 1,
+        "children": [
+          {
+            "id": "data-growth",
+            "topic": "增长问题",
+            "level": 2,
+            "children": [
+              {
+                "id": "data-growth-rate",
+                "topic": "增长率"
+              },
+              {
+                "id": "data-growth-amount",
+                "topic": "增长量"
+              },
+              {
+                "id": "data-growth-base",
+                "topic": "基期与现期"
+              },
+              {
+                "id": "data-growth-average",
+                "topic": "年均增长"
+              }
+            ]
+          },
+          {
+            "id": "data-ratio",
+            "topic": "比重问题",
+            "level": 2,
+            "children": [
+              {
+                "id": "data-ratio-current",
+                "topic": "现期比重"
+              },
+              {
+                "id": "data-ratio-base",
+                "topic": "基期比重"
+              },
+              {
+                "id": "data-ratio-change",
+                "topic": "比重变化"
+              },
+              {
+                "id": "data-ratio-composition",
+                "topic": "结构占比"
+              }
+            ]
+          },
+          {
+            "id": "data-average",
+            "topic": "平均数问题",
+            "level": 2,
+            "children": [
+              {
+                "id": "data-average-current",
+                "topic": "现期平均数"
+              },
+              {
+                "id": "data-average-base",
+                "topic": "基期平均数"
+              },
+              {
+                "id": "data-average-growth",
+                "topic": "平均数增长率"
+              },
+              {
+                "id": "data-average-weighted",
+                "topic": "加权平均"
+              }
+            ]
+          },
+          {
+            "id": "data-comparison",
+            "topic": "倍数与比较",
+            "level": 2,
+            "children": [
+              {
+                "id": "data-comparison-multiple",
+                "topic": "倍数计算"
+              },
+              {
+                "id": "data-comparison-ranking",
+                "topic": "排序比较"
+              },
+              {
+                "id": "data-comparison-estimate",
+                "topic": "截位估算"
+              },
+              {
+                "id": "data-comparison-comprehensive",
+                "topic": "综合判断"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "module-quant",
+        "topic": "数量关系",
+        "level": 1,
+        "children": [
+          {
+            "id": "quant-arithmetic",
+            "topic": "基础计算",
+            "level": 2,
+            "children": [
+              {
+                "id": "quant-arithmetic-equation",
+                "topic": "方程法"
+              },
+              {
+                "id": "quant-arithmetic-ratio",
+                "topic": "比例倍数"
+              },
+              {
+                "id": "quant-arithmetic-extreme",
+                "topic": "最值问题"
+              },
+              {
+                "id": "quant-arithmetic-remainder",
+                "topic": "整除余数"
+              }
+            ]
+          },
+          {
+            "id": "quant-profit",
+            "topic": "经济利润",
+            "level": 2,
+            "children": [
+              {
+                "id": "quant-profit-cost",
+                "topic": "成本售价利润"
+              },
+              {
+                "id": "quant-profit-discount",
+                "topic": "折扣促销"
+              },
+              {
+                "id": "quant-profit-tax",
+                "topic": "税费与补贴"
+              },
+              {
+                "id": "quant-profit-break-even",
+                "topic": "盈亏平衡"
+              }
+            ]
+          },
+          {
+            "id": "quant-engineering",
+            "topic": "工程行程",
+            "level": 2,
+            "children": [
+              {
+                "id": "quant-engineering-efficiency",
+                "topic": "效率合作"
+              },
+              {
+                "id": "quant-engineering-water",
+                "topic": "流水行船"
+              },
+              {
+                "id": "quant-engineering-meet",
+                "topic": "相遇追及"
+              },
+              {
+                "id": "quant-engineering-schedule",
+                "topic": "周期排程"
+              }
+            ]
+          },
+          {
+            "id": "quant-combinatorics",
+            "topic": "排列组合与概率",
+            "level": 2,
+            "children": [
+              {
+                "id": "quant-combinatorics-classification",
+                "topic": "分类分步"
+              },
+              {
+                "id": "quant-combinatorics-arrange",
+                "topic": "排列组合"
+              },
+              {
+                "id": "quant-combinatorics-probability",
+                "topic": "古典概率"
+              },
+              {
+                "id": "quant-combinatorics-exclusion",
+                "topic": "容斥原理"
+              }
+            ]
+          },
+          {
+            "id": "quant-geometry",
+            "topic": "几何问题",
+            "level": 2,
+            "children": [
+              {
+                "id": "quant-geometry-plane",
+                "topic": "平面几何"
+              },
+              {
+                "id": "quant-geometry-solid",
+                "topic": "立体几何"
+              },
+              {
+                "id": "quant-geometry-area",
+                "topic": "面积体积"
+              },
+              {
+                "id": "quant-geometry-similarity",
+                "topic": "相似比例"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "id": "module-common",
+        "topic": "常识判断",
+        "level": 1,
+        "children": [
+          {
+            "id": "common-politics",
+            "topic": "政治时政",
+            "level": 2,
+            "children": [
+              {
+                "id": "common-politics-party",
+                "topic": "党政理论"
+              },
+              {
+                "id": "common-politics-policy",
+                "topic": "重大政策"
+              },
+              {
+                "id": "common-politics-meeting",
+                "topic": "重要会议"
+              },
+              {
+                "id": "common-politics-governance",
+                "topic": "国家治理"
+              }
+            ]
+          },
+          {
+            "id": "common-law",
+            "topic": "法律常识",
+            "level": 2,
+            "children": [
+              {
+                "id": "common-law-constitution",
+                "topic": "宪法行政法"
+              },
+              {
+                "id": "common-law-civil",
+                "topic": "民法"
+              },
+              {
+                "id": "common-law-criminal",
+                "topic": "刑法"
+              },
+              {
+                "id": "common-law-procedure",
+                "topic": "诉讼与处罚"
+              }
+            ]
+          },
+          {
+            "id": "common-economy",
+            "topic": "经济管理",
+            "level": 2,
+            "children": [
+              {
+                "id": "common-economy-macro",
+                "topic": "宏观调控"
+              },
+              {
+                "id": "common-economy-finance",
+                "topic": "财政金融"
+              },
+              {
+                "id": "common-economy-market",
+                "topic": "市场主体"
+              },
+              {
+                "id": "common-economy-trade",
+                "topic": "贸易投资"
+              }
+            ]
+          },
+          {
+            "id": "common-science",
+            "topic": "科技自然",
+            "level": 2,
+            "children": [
+              {
+                "id": "common-science-physics",
+                "topic": "物理化学"
+              },
+              {
+                "id": "common-science-biology",
+                "topic": "生命健康"
+              },
+              {
+                "id": "common-science-geography",
+                "topic": "地理环境"
+              },
+              {
+                "id": "common-science-frontier",
+                "topic": "前沿科技"
+              }
+            ]
+          },
+          {
+            "id": "common-humanity",
+            "topic": "历史人文",
+            "level": 2,
+            "children": [
+              {
+                "id": "common-humanity-history",
+                "topic": "中国历史"
+              },
+              {
+                "id": "common-humanity-literature",
+                "topic": "文学艺术"
+              },
+              {
+                "id": "common-humanity-culture",
+                "topic": "传统文化"
+              },
+              {
+                "id": "common-humanity-geography",
+                "topic": "文化地理"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

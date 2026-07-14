@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+sqlalchemy
+pymysql
+pydantic
+pydantic-settings
+python-dotenv
+requests
+httpx
+langchain
+langchain-openai
+numpy
+pandas

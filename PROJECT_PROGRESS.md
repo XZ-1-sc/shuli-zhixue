@@ -1,0 +1,206 @@
+# 行测智脑项目进度
+
+## 最新进度（2026-07-12）
+
+- 已新增独立方案刷题与任务完成查看页面：`frontend/plan.html`。
+- 首页选择备考方案后，现在会跳转到 `plan.html`，不再展开到首页下方的专属模块。
+- `frontend/static/js/plan.js` 已实现：
+  - 读取当前登录用户和当前方案。
+  - 渲染方案专项任务、20 题混合模拟入口。
+  - 支持进入独立 `practice.html` 刷题。
+  - 支持按用户和方案保存任务完成状态。
+  - 支持查看最近做题记录数和五大模块诊断分数。
+- 从方案页进入做题页时会带 `return_to=plan`，做题页顶部按钮会返回方案页。
+- 首页顶部导航已优化信息层级：
+  - 品牌区、页面导航、目标/登录状态分区展示。
+  - 导航区改为独立胶囊栏。
+  - 目标分数、考试日期、登录状态统一收进右侧状态区。
+- 后端 `user_study_plans` 已支持访问时自动建表，避免 `/api/study-plans/current` 因未执行迁移脚本返回 503。
+- 已完成检查：
+  - `python -m compileall -q backend scripts`
+  - `node --check frontend/static/js/main.js`
+  - `node --check frontend/static/js/practice.js`
+  - `node --check frontend/static/js/plan.js`
+  - `python -m pip check`
+  - 接口抽测通过：`/api/study-plans/options`、`/api/study-plans/current`、`/api/diagnose`、`/api/practice/random`。
+
+- 已把做题练习从首页底部嵌入区改为独立页面：`frontend/practice.html`。
+- 首页“做题练习”“模拟考试”“今日必做”“方案专项训练”等入口现在会跳转到独立做题页，而不是滚到页面最下方。
+- 已新增独立做题页脚本：`frontend/static/js/practice.js`。
+  - 支持按题型/知识点切换练习。
+  - 支持普通随机练习。
+  - 支持模拟考试随机抽题。
+  - 支持选择题作答、提交、显示正确答案。
+  - 支持简答题和材料分析题输入、提交、关键词评分、参考答案展示。
+- 后端已补充主观题逻辑：
+  - `/api/practice/random` 可混入 `short_answer` 和 `analysis` 题。
+  - `/api/practice/random?knowledge_tag=简答题-逻辑判断` 可返回对应主观题。
+  - `/api/practice/submit` 支持 `answer_text` 提交主观题。
+  - 主观题记录写入 `subjective_practice_records`，并参与后续诊断统计。
+- 已更新数据库脚本：
+  - `scripts/create_xingce_schema.sql`
+  - `scripts/add_learning_workflow_tables.sql`
+- 已完成检查：
+  - `python -m compileall -q backend scripts`
+  - `node --check frontend/static/js/main.js`
+  - `node --check frontend/static/js/practice.js`
+  - `python -m pip check`
+  - 接口抽测通过：随机练习、专项主观题、主观题提交、选择题提交、模拟考试。
+
+更新时间：2026-07-11
+
+## 已完成
+
+- 已整理题库数据到 `data/questions.csv`，约 337 道行测选择题，字段包含题干、A/B/C/D、正确答案、所属模块、知识点标签、来源等。
+- 已设计知识图谱到 `data/knowledge_graph.json`，包含言语、判断、资料、数量、常识五大模块及二、三级知识点。
+- 已创建 MySQL 建表脚本 `scripts/create_xingce_schema.sql`，包含用户表、题目表、做题记录表、知识节点表。
+- 用户确认 MySQL 中 `SHOW TABLES` 返回 4 张表，说明基础表已建立。
+- 已创建后端目录结构：
+  - `backend/app/database/`
+  - `backend/app/agents/`
+  - `backend/app/api/routes/`
+  - `backend/app/utils/`
+  - `backend/app/prompts/`
+  - 各包目录均有 `__init__.py`
+- 已创建 `backend/.env` 和 `backend/requirements.txt`，其中 `.env` 已保留给用户填写密码和密钥，不在文档中记录敏感信息。
+- 已完成数据库连接代码 `backend/app/database/session.py`：
+  - 读取 `.env`
+  - 创建 SQLAlchemy `engine`
+  - 创建 `SessionLocal`
+  - 提供 `get_db()` 生成器
+- 已完成 LLM 调用工具 `backend/app/utils/llm_client.py`：
+  - 支持 DeepSeek 兼容接口
+  - 支持失败重试
+  - 支持降级默认回复
+- 已完成诊断智能体：
+  - Prompt：`backend/app/prompts/diagnostician.txt`
+  - 代码：`backend/app/agents/diagnostician.py`
+  - 功能：根据做题记录输出三个薄弱点和置信度
+- 已完成策略智能体：
+  - Prompt：`backend/app/prompts/strategist.txt`
+  - 代码：`backend/app/agents/strategist.py`
+  - 功能：根据诊断结果输出一周学习优先级、主攻模块、每日学习时长、可暂时放弃的难题类型
+- 已完成导航推荐智能体：
+  - 代码：`backend/app/agents/navigator.py`
+  - 功能：根据策略中的主攻模块和知识点，从数据库筛题，按难度排序推荐前 10 道
+- 已完成评估智能体：
+  - 代码：`backend/app/agents/evaluator.py`
+  - 功能：`evaluate(user_id, task_id)` 查询当前任务正确率，对比历史正确率，生成自然语言复盘
+- 已完成总调度器：
+  - 代码：`backend/app/orchestrator.py`
+  - 功能：`run_pipeline(user_id)` 异步串联最近做题记录、诊断智能体、策略智能体、导航推荐智能体，并返回 JSON 字典
+- 已完成自然语言协商增强逻辑：
+  - 代码：`backend/app/negotiator.py`
+  - 功能：策略体先审查诊断体输出是否清晰；如果缺少“知识点不会/做题慢/审题错误”等原因类型，则要求诊断体重新分析
+  - 限制：最多 3 轮协商，防止死循环
+  - 日志：每轮对话写入 MySQL `negotiation_log` 表
+- 已完成前端 HTML 骨架：
+  - 代码：`frontend/index.html`
+  - 功能：划分顶部导航、中间主区、右下角军师小逻悬浮窗三块区域
+  - 已引入 ECharts CDN，并预留 `knowledgeRadar` 雷达图容器和初始化示例
+  - 使用 CSS Flex 完成基础自适应布局
+- 已完成前端 API 对接脚本：
+  - 代码：`frontend/static/js/main.js`
+  - 页面加载时请求 `GET http://localhost:8000/api/diagnose?user_id=1`
+  - 根据诊断结果渲染 ECharts 五维雷达图
+  - 请求 `GET http://localhost:8000/api/recommend` 并渲染推荐任务列表
+  - 军师小逻输入框支持向 `/api/chat` 发送消息，并按 SSE/流式文本接收回复
+- 已完成军师小逻流式逐字输出：
+  - 使用 `fetch + ReadableStream` 接收 `text/event-stream`
+  - 兼容 `EventSource` 作为兜底
+  - 前端收到 `data:` 片段后进入打字队列，按字符逐步追加到对话框
+- 已完成 FastAPI 后端启动入口和联调接口：
+  - 代码：`backend/app/main.py`
+  - 路由：`backend/app/api/routes/learning.py`
+  - 支持 `GET /api/diagnose`、`GET /api/recommend`、`POST /api/chat`
+  - `/api/chat` 返回 `text/event-stream`，支持前端军师小逻逐字输出
+  - 已验证 `uvicorn app.main:app` 可以正常启动
+- 已完成后端登录系统：
+  - 路由：`backend/app/api/routes/auth.py`
+  - 接口：`POST /api/login`
+  - 接口：`POST /api/register`
+  - 密码工具：`backend/app/utils/password.py`
+  - 密码使用 PBKDF2-HMAC-SHA256 哈希存储，不保存明文密码
+  - 用户表脚本：`scripts/create_users_table.sql`
+  - 测试用户创建脚本：`scripts/create_demo_user.py`
+- 已完成前端注册入口：
+  - 登录弹窗支持“登录/注册”模式切换
+  - 注册时校验确认密码和最短密码长度
+  - 注册成功后直接进入系统，并绑定当前用户状态
+- 已完成真实做题闭环：
+  - 后端新增 `/api/question-types`，按模块和知识点返回题型统计
+  - 后端新增 `/api/practice/random`，普通练习每次随机抽题
+  - 后端新增 `/api/mock-exam`，模拟考试每次随机抽题
+  - 后端新增 `/api/practice/submit`，提交答案并写入 `practice_records`
+  - `practice_records` 旧表缺少 `task_id` 时，提交答案前会自动补齐字段
+  - 题库表为空或题量不足时，后端会从 `data/questions.csv` 补充题目到 MySQL 后再抽题
+  - 雷达图在用户提交答案后根据真实做题记录刷新
+- 已完成目标设置：
+  - 后端新增 `/api/user-goals` GET/POST
+  - 前端顶部可设置目标分数和考试日期
+  - 剩余天数根据考试日期自动计算
+- 已完成前端练习视图：
+  - 今日必做点击后进入做题页面
+  - 方案卡片点击后进入对应方案专属页面
+  - 方案页包含训练优先级、题型分类和模拟考试入口
+  - 练习页支持选项选择、提交答案、下一题、重新抽题
+  - 模拟考试入口支持全模块随机抽题
+- 分数线看板已支持后端年份筛选，前端年份下拉由接口返回的年份自动生成。
+- 已完成小逻会话与备考方案后端增强：
+  - `/api/chat` 支持 `session_id`，返回流式 `session_id` 与逐字 `delta`
+  - `/api/chat/history` 支持按用户和会话读取历史消息
+  - `/api/chat/sessions` 支持读取用户历史会话列表
+  - `/api/study-plans/options` 返回备考方案选项
+  - `/api/study-plans/current` 读取当前用户方案
+  - `/api/study-plans/select` 保存当前用户方案
+  - `/api/score-lines` 返回国考和省考分数线看板数据
+  - 新增迁移脚本：`scripts/add_chat_and_plan_tables.sql`
+- 已完成前端整体布局与小逻交互改造：
+  - `frontend/index.html` 改为垂直滚动主容器
+  - 首屏保留顶部导航、今日必做、知识图谱雷达图
+  - 首屏下方新增“分数线看板”和“备考方案选择器”
+  - 分数线看板内部支持局部纵向滚动
+  - “军师”更名为“小逻”，改为右侧固定入口，点击后滑出抽屉
+  - 小逻抽屉支持关闭、拖拽、连续会话、消息气泡和历史记录查看
+  - 前端新增登录弹窗，登录后使用当前用户 ID 绑定聊天历史和备考方案
+  - 所有按钮、卡片、任务项、分数线行等可点击元素统一增加 hover 上浮和阴影反馈
+- 已处理 `/docs` 白屏问题：
+  - 原因：FastAPI 默认 Swagger UI 依赖外部 CDN，网络或 VPN 阻断时会空白
+  - 处理：`backend/app/main.py` 中改为本地离线 `/docs` 页面，不依赖外网资源
+  - 已验证 `http://127.0.0.1:8000/docs` 返回 200 且包含本地文档内容
+- 已补充迁移脚本 `scripts/add_task_id_to_practice_records.sql`，用于给已有 `practice_records` 表增加 `task_id` 字段。
+- 已补充迁移脚本 `scripts/add_negotiation_log_table.sql`，用于给已有数据库增加 `negotiation_log` 表。
+- 已通过后端 Python 编译检查：`python -m compileall -q backend`
+- 已通过依赖检查：`pip check`
+- 已通过前端 JS 语法检查：`node --check frontend\static\js\main.js`
+- 已通过 FastAPI 基础接口检查：`/api/health`、`/api/score-lines`、`/api/study-plans/options`、`/docs` 返回 200
+- 已通过 `/api/chat` 流式响应检查，确认返回 `session_id` 与 `delta`
+- 已通过做题工作流接口检查：`/api/question-types`、`/api/practice/random`、`/api/mock-exam`、`/api/user-goals` 返回 200
+- 已通过提交答案检查：`/api/practice/submit` 返回 200，做题记录可被 `/api/diagnose` 读取
+
+## 当前注意事项
+
+- `.env` 中的数据库密码和 LLM API Key 不应提交、不应展示。
+- Python 检查建议使用项目虚拟环境：`.venv\Scripts\python.exe`
+- PyCharm 解释器建议选择项目内 `.venv\Scripts\python.exe`
+- 每次完成代码或页面任务后，都要立即运行相关检查；如果发现报错，继续处理到检查通过后再结束。
+- 如果数据库里已有旧版 `practice_records` 表，需要先在 MySQL 执行：
+  - `scripts/add_task_id_to_practice_records.sql`
+- 如果数据库里还没有小逻历史和备考方案表，需要在 MySQL 执行：
+  - `scripts/add_chat_and_plan_tables.sql`
+- 如果数据库里还没有目标设置表，可以执行：
+  - `scripts/add_learning_workflow_tables.sql`
+  - 目前后端也会在保存目标设置时自动创建该表。
+- 之前 Python 连接 MySQL 时出现过 `Access denied for user 'root'@'localhost'`，需要确认 `.env` 中 `DATABASE_URL` 的密码与本机 MySQL root 密码一致。
+
+## 下一步建议
+
+- 创建 ORM 模型文件，例如 `backend/app/database/models.py`
+- 创建题目导入脚本，把 `data/questions.csv` 写入 MySQL `questions` 表
+- 创建 FastAPI 路由：
+  - 用户接口
+  - 题目接口
+  - 做题记录接口
+  - 智能体接口
+- 编写启动入口 `backend/main.py`
+- 在 PyCharm 中运行后端并测试接口
