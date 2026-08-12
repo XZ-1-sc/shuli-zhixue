@@ -33,7 +33,10 @@ jobs:
           EOF
 
       - name: Python syntax check
-        run: python -m compileall -q backend scripts
+        run: |
+          python -m pip install -r backend/requirements.txt
+          python -m compileall -q backend scripts
+          python scripts/test_question_document_parser.py
 
       - name: Frontend build
         working-directory: frontend

@@ -335,3 +335,23 @@
 先运行 python -m compileall -q backend scripts、npm.cmd run build、docker compose config --quiet，再按新需求继续。
 不要提交 backend/.env、backups/、tmp/，不要删除 math_brain 的现有数据。
 ```
+
+## 2026-08-12 进度补充：题库文件导入与上传试卷组卷
+
+- 教师题库页新增“文件导入”向导，支持 `.pdf`、`.xlsx`、`.xls` 和 UTF-8 `.csv`，单文件最大 15 MB、单次最多 500 道题。
+- 导入采用两阶段流程：先解析预览，再确认写库；预览会显示题型、题干、答案、分值、缺失字段、警告和有效/无效数量，无效题不会写入。
+- 提供可下载的 Excel 模板，字段覆盖阶段、课程、知识点、题型、A/B/C/D、答案、解析、关键步骤、常见错误、错因标签和分值。
+- 文字型 PDF 支持常见的“题号 + A/B/C/D + 答案/解析”以及卷尾统一“答案与解析”结构；扫描图片型 PDF 会明确提示先做 OCR，不会把乱码写入题库。
+- 作业编辑页新增“上传试卷”：解析后的有效题会自动发布到教师题库并加入当前作业，同时保留搜索手选、随机中文抽题和逐题改分。
+- 重复题保护：题库导入会跳过同一教师的重复题；上传试卷时会复用教师已有的未归档题，草稿会自动发布，不重复创建。
+- 作业继续限制最多 100 道题，手选、随机和文件导入均遵守剩余容量。
+- 新增接口：
+  - `GET /api/teacher/question-imports/template`
+  - `POST /api/teacher/question-imports/preview`
+  - `POST /api/teacher/question-imports/commit`
+- 新增回归脚本：
+  - `scripts/test_question_document_parser.py`：离线覆盖 Excel、文字 PDF 和扫描 PDF 拒绝。
+  - `scripts/test_question_import_api.py`：覆盖模板、预览、写库、去重与组卷复用，测试数据自动清理。
+  - `scripts/test_teacher_browser.py` 已覆盖题库导入弹窗和组卷上传试卷弹窗。
+- 运行环境：`pypdf`、`xlrd` 已加入后端依赖；Nginx `client_max_body_size` 已调整为 20 MB；GitHub Actions 会运行离线文件解析回归。
+- 验证结果：Python 编译、依赖检查、Vue 构建、Compose 配置、Excel/API 回归、PDF 回归、Edge 桌面与移动端检查均通过。

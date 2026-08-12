@@ -12,5 +12,7 @@ langchain-openai
 numpy
 pandas
 openpyxl
+xlrd
 Pillow
 python-multipart
+pypdf

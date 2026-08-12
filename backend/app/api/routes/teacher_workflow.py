@@ -1,5 +1,4 @@
 import asyncio
-import csv
 import io
 import json
 import uuid
@@ -7,13 +6,14 @@ from datetime import datetime
 from typing import Any, Literal
 
 import pandas as pd
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from ...database.session import SessionLocal
 from ...security import require_teacher
+from ...utils.question_document_parser import QuestionDocumentError, parse_question_document
 from .learning import _parse_json_list, _row_to_question, _score_subjective
 from .teacher import _audit, _ensure_teacher_tables_sync, _owned_class
 
@@ -85,6 +85,15 @@ class AssignmentWriteRequest(BaseModel):
         if self.due_at and self.starts_at and self.due_at <= self.starts_at:
             raise ValueError("截止时间必须晚于开始时间。")
         return self
+
+
+class QuestionImportCommitRequest(BaseModel):
+    questions: list[dict[str, Any]] = Field(min_length=1, max_length=500)
+    publish_status: Literal["draft", "published"] = "draft"
+    visibility: Literal["public", "class"] = "public"
+    source_file_name: str = Field(default="导入文件", max_length=255)
+    skip_duplicates: bool = True
+    reuse_duplicates: bool = False
 
 
 class ReviewRequest(BaseModel):
@@ -713,32 +722,97 @@ def _random_questions_sync(
     }
 
 
-def _import_questions_sync(teacher_id: int, rows: list[dict[str, Any]]) -> dict[str, Any]:
-    created: list[int] = []
+def _commit_question_import_sync(teacher_id: int, request: QuestionImportCommitRequest) -> dict[str, Any]:
+    created: list[dict[str, Any]] = []
+    available: list[dict[str, Any]] = []
+    duplicate_count = 0
+    reused_count = 0
     errors: list[dict[str, Any]] = []
-    aliases = {
-        "题型": "question_type", "阶段": "stage", "课程": "course", "知识点": "knowledge_tag",
-        "细分标签": "fine_tag", "难度": "difficulty", "题干": "question_text",
-        "选项A": "option_a", "选项B": "option_b", "选项C": "option_c", "选项D": "option_d",
-        "正确答案": "correct_answer", "标准答案": "standard_answer", "解析": "analysis_text",
-        "关键步骤": "key_steps", "常见错误": "common_errors", "错因标签": "mistake_tags",
-    }
-    type_aliases = {"选择题": "choice", "填空题": "blank", "计算题": "calculation", "证明题": "proof", "综合题": "comprehensive"}
-    for index, raw in enumerate(rows, start=2):
-        normalized = {aliases.get(str(key).strip(), str(key).strip()): value for key, value in raw.items()}
-        normalized["question_type"] = type_aliases.get(str(normalized.get("question_type", "")).strip(), str(normalized.get("question_type", "")).strip())
-        for key in ("key_steps", "common_errors", "mistake_tags"):
-            value = normalized.get(key, [])
-            normalized[key] = [part.strip() for part in str(value).replace("；", "|").replace(";", "|").split("|") if part.strip()] if not isinstance(value, list) else value
-        normalized["difficulty"] = int(float(normalized.get("difficulty") or 3))
-        normalized["publish_status"] = "draft"
-        normalized["visibility"] = "public"
+    seen_in_request: set[str] = set()
+    for index, raw in enumerate(request.questions, start=1):
+        normalized = dict(raw)
+        normalized["publish_status"] = request.publish_status
+        normalized["visibility"] = request.visibility
+        fingerprint = "".join(str(normalized.get("question_text") or "").split()).lower()
         try:
+            points = float(raw.get("points") or 10)
+            if not 1 <= points <= 100:
+                raise ValueError("题目分值必须在 1 到 100 之间。")
             payload = QuestionWriteRequest.model_validate(normalized)
-            created.append(_create_question_sync(teacher_id, payload)["id"])
+            if request.skip_duplicates and fingerprint in seen_in_request:
+                duplicate_count += 1
+                continue
+            if request.skip_duplicates:
+                with SessionLocal() as db:
+                    duplicate = db.execute(
+                        text(
+                            f"""
+                            SELECT {_question_columns()}
+                            FROM questions AS q
+                            JOIN source_attributions AS s ON s.id=q.source_id
+                            WHERE q.created_by=:teacher_id AND q.deleted_at IS NULL
+                              AND q.question_text=:question_text
+                            LIMIT 1
+                            """
+                        ),
+                        {"teacher_id": teacher_id, "question_text": payload.question_text},
+                    ).mappings().first()
+                if duplicate:
+                    if request.reuse_duplicates and duplicate["publish_status"] != "archived":
+                        if duplicate["publish_status"] != "published":
+                            reused = _change_question_status_sync(
+                                teacher_id,
+                                int(duplicate["id"]),
+                                "published",
+                            )
+                        else:
+                            reused = _question_dict(duplicate)
+                        reused |= {"editable": True, "points": points, "reused": True}
+                        available.append(reused)
+                        reused_count += 1
+                        seen_in_request.add(fingerprint)
+                        continue
+                    if not request.reuse_duplicates:
+                        duplicate_count += 1
+                        continue
+            item = _create_question_sync(teacher_id, payload)
+            item["points"] = points
+            created.append(item)
+            available.append(item)
+            seen_in_request.add(fingerprint)
         except Exception as exc:
-            errors.append({"row": index, "message": str(getattr(exc, "detail", exc))[:500]})
-    return {"created_count": len(created), "question_ids": created, "error_count": len(errors), "errors": errors[:50]}
+            errors.append(
+                {
+                    "row": raw.get("source_row", index),
+                    "message": str(getattr(exc, "detail", exc))[:500],
+                }
+            )
+    with SessionLocal() as db:
+        _audit(
+            db,
+            teacher_id,
+            "question.imported",
+            "question_import",
+            None,
+            {
+                "source_file_name": request.source_file_name,
+                "created_count": len(created),
+                "duplicate_count": duplicate_count,
+                "reused_count": reused_count,
+                "error_count": len(errors),
+            },
+        )
+        db.commit()
+    return {
+        "created_count": len(created),
+        "question_ids": [int(item["id"]) for item in available],
+        "questions": available,
+        "duplicate_count": duplicate_count,
+        "reused_count": reused_count,
+        "error_count": len(errors),
+        "errors": errors[:50],
+        "source_file_name": request.source_file_name,
+    }
 
 
 def _owned_assignment(db: Any, teacher_id: int, assignment_id: int) -> dict[str, Any]:
@@ -1192,28 +1266,127 @@ async def archive_question(question_id: int, current: dict[str, Any] = Depends(r
     return await asyncio.to_thread(_change_question_status_sync, int(current["id"]), question_id, "archived")
 
 
+async def _read_question_import(file: UploadFile) -> tuple[bytes, str]:
+    filename = file.filename or "未命名文件"
+    raw = await file.read(15 * 1024 * 1024 + 1)
+    await file.close()
+    if len(raw) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="导入文件不能超过 15 MB。")
+    if not raw:
+        raise HTTPException(status_code=422, detail="上传文件为空。")
+    return raw, filename
+
+
+@router.get("/question-imports/template")
+async def question_import_template(current: dict[str, Any] = Depends(require_teacher)) -> Response:
+    del current
+    rows = [
+        {
+            "题型": "选择题",
+            "阶段": "大一",
+            "课程": "高等数学（上）",
+            "知识点": "函数极限",
+            "细分标签": "极限运算",
+            "难度": 2,
+            "题干": "当 x 趋于 0 时，sin(x)/x 的极限是（ ）。",
+            "选项A": "0",
+            "选项B": "1",
+            "选项C": "不存在",
+            "选项D": "无穷大",
+            "正确答案": "B",
+            "标准答案": "B",
+            "解析": "利用重要极限 lim(x→0) sin(x)/x = 1。",
+            "关键步骤": "识别重要极限|直接代入结论",
+            "常见错误": "误认为可直接代入得到 0/0",
+            "错因标签": "重要极限",
+            "分值": 5,
+        },
+        {
+            "题型": "计算题",
+            "阶段": "大一",
+            "课程": "高等数学（上）",
+            "知识点": "导数",
+            "细分标签": "复合函数求导",
+            "难度": 3,
+            "题干": "求函数 y=sin(x²) 的导数。",
+            "选项A": "",
+            "选项B": "",
+            "选项C": "",
+            "选项D": "",
+            "正确答案": "",
+            "标准答案": "y'=2x cos(x²)",
+            "解析": "令 u=x²，使用复合函数链式法则。",
+            "关键步骤": "令 u=x²|外层求导|乘以内层导数",
+            "常见错误": "遗漏内层导数 2x",
+            "错因标签": "链式法则",
+            "分值": 10,
+        },
+    ]
+    buffer = io.BytesIO()
+    pd.DataFrame(rows).to_excel(buffer, index=False, engine="openpyxl")
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="math-question-import-template.xlsx"'},
+    )
+
+
+@router.post("/question-imports/preview")
+async def preview_question_import(
+    file: UploadFile = File(...),
+    default_stage: str = Form(default=""),
+    default_course: str = Form(default=""),
+    default_knowledge_tag: str = Form(default=""),
+    default_fine_tag: str = Form(default=""),
+    default_difficulty: int = Form(default=3),
+    current: dict[str, Any] = Depends(require_teacher),
+) -> dict[str, Any]:
+    raw, filename = await _read_question_import(file)
+    defaults = {
+        "stage": default_stage,
+        "course": default_course,
+        "knowledge_tag": default_knowledge_tag,
+        "fine_tag": default_fine_tag,
+        "difficulty": max(1, min(5, default_difficulty)),
+    }
+    try:
+        result = await asyncio.to_thread(parse_question_document, raw, filename, defaults)
+    except QuestionDocumentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    with SessionLocal() as db:
+        _audit(
+            db,
+            int(current["id"]),
+            "question.import_previewed",
+            "question_import",
+            None,
+            {"file_name": filename, "total_detected": result["total_detected"], "valid_count": result["valid_count"]},
+        )
+        db.commit()
+    return result
+
+
+@router.post("/question-imports/commit", status_code=status.HTTP_201_CREATED)
+async def commit_question_import(
+    payload: QuestionImportCommitRequest,
+    current: dict[str, Any] = Depends(require_teacher),
+) -> dict[str, Any]:
+    return await asyncio.to_thread(_commit_question_import_sync, int(current["id"]), payload)
+
+
 @router.post("/question-imports", status_code=status.HTTP_201_CREATED)
 async def import_questions(file: UploadFile = File(...), current: dict[str, Any] = Depends(require_teacher)) -> dict[str, Any]:
-    raw = await file.read(5 * 1024 * 1024 + 1)
-    await file.close()
-    if len(raw) > 5 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="导入文件不能超过 5 MB。")
-    suffix = (file.filename or "").lower().rsplit(".", 1)[-1]
+    """Compatibility endpoint for older clients; new clients preview before committing."""
+    raw, filename = await _read_question_import(file)
     try:
-        if suffix in {"xlsx", "xls"}:
-            rows = pd.read_excel(io.BytesIO(raw)).fillna("").to_dict(orient="records")
-        elif suffix == "csv":
-            decoded = raw.decode("utf-8-sig")
-            rows = list(csv.DictReader(io.StringIO(decoded)))
-        else:
-            raise HTTPException(status_code=415, detail="仅支持 UTF-8 CSV 或 Excel 文件。")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail="文件读取失败，请检查表头和文件格式。") from exc
-    if not rows or len(rows) > 500:
-        raise HTTPException(status_code=422, detail="每次请导入 1 到 500 道题。")
-    return await asyncio.to_thread(_import_questions_sync, int(current["id"]), rows)
+        preview = await asyncio.to_thread(parse_question_document, raw, filename, {})
+    except QuestionDocumentError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    valid = [item for item in preview["questions"] if item["valid"]]
+    if not valid:
+        raise HTTPException(status_code=422, detail="文件中没有通过校验的题目，请使用预览导入检查错误。")
+    request = QuestionImportCommitRequest(questions=valid, source_file_name=filename)
+    return await asyncio.to_thread(_commit_question_import_sync, int(current["id"]), request)
 
 
 @router.get("/assignments")

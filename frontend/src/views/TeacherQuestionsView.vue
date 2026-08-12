@@ -1,6 +1,6 @@
 <template>
   <TeacherPageShell active="questions" title="题库管理" eyebrow="内容资产" description="浏览公共题库，维护教师自建题，发布后即可用于组卷。">
-    <template #actions><button class="teacher-secondary-action" type="button" @click="fileInput?.click()">⇧ 批量导入</button><RouterLink class="teacher-primary-action" to="/teacher/questions/new">＋ 新建题目</RouterLink><input ref="fileInput" hidden type="file" accept=".csv,.xlsx,.xls" @change="importFile" /></template>
+    <template #actions><button class="teacher-secondary-action" type="button" @click="importOpen = true">⇧ 文件导入</button><RouterLink class="teacher-primary-action" to="/teacher/questions/new">＋ 新建题目</RouterLink></template>
     <section class="teacher-metric-grid teacher-four-metrics"><article><span class="metric-icon cyan">▤</span><div><small>全部可用题目</small><strong>{{ summary.total }}</strong><p>开放与自建题库</p></div></article><article><span class="metric-icon blue">✎</span><div><small>我的题目</small><strong>{{ summary.mine }}</strong><p>当前教师创建</p></div></article><article><span class="metric-icon amber">◌</span><div><small>草稿</small><strong>{{ summary.drafts }}</strong><p>尚不可用于发布作业</p></div></article><article><span class="metric-icon green">✓</span><div><small>已发布</small><strong>{{ summary.published }}</strong><p>可直接组卷</p></div></article></section>
     <section class="teacher-filter-bar teacher-question-filters">
       <label><span>范围</span><select v-model="filters.scope" @change="resetLoad"><option value="all">全部可用</option><option value="mine">我的题目</option><option value="public">公共题库</option></select></label>
@@ -16,14 +16,15 @@
       <div v-if="questions.length" class="teacher-question-list"><article v-for="item in questions" :key="item.id"><header><span>{{ item.type_label }}</span><small>{{ item.stage }} · {{ item.course }}</small><em :class="`status-${item.publish_status}`">{{ statusText(item.publish_status) }}</em></header><h3>{{ item.question_text }}</h3><p>{{ item.knowledge_tag }} / {{ item.fine_tag }} · 难度 {{ item.difficulty }} · {{ item.source_name }}</p><footer><span v-if="item.question_type === 'choice'">答案 {{ item.correct_answer }}</span><span v-else>标准答案：{{ truncate(item.standard_answer, 60) }}</span><div><button type="button" @click="copyQuestion(item)">复制为草稿</button><template v-if="item.editable"><RouterLink :to="`/teacher/questions/${item.id}/edit`">编辑</RouterLink><button v-if="item.publish_status === 'draft'" @click="publishQuestion(item)">发布</button><button v-if="item.publish_status !== 'archived'" class="danger" @click="archiveQuestion(item)">归档</button></template></div></footer></article></div><div v-else class="teacher-inline-empty">当前筛选条件下没有题目。</div>
       <footer v-if="total > filters.page_size" class="teacher-pagination"><button :disabled="page <= 1" @click="changePage(page - 1)">上一页</button><span>{{ page }} / {{ Math.ceil(total / filters.page_size) }}</span><button :disabled="page >= Math.ceil(total / filters.page_size)" @click="changePage(page + 1)">下一页</button></footer>
     </section>
+    <QuestionImportDialog :open="importOpen" mode="bank" :initial-stage="filters.stage" :initial-course="filters.course" @close="importOpen = false" @imported="handleImported" />
   </TeacherPageShell>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from "vue"; import { RouterLink, useRouter } from "vue-router";
-import { apiGet, apiPost, apiUpload } from "../api/client"; import TeacherPageShell from "../components/TeacherPageShell.vue";
+import { apiGet, apiPost } from "../api/client"; import TeacherPageShell from "../components/TeacherPageShell.vue"; import QuestionImportDialog from "../components/QuestionImportDialog.vue";
 const router=useRouter();
-const loading=ref(true), error=ref(""), message=ref(""), messageError=ref(false), fileInput=ref(null), questions=ref([]), total=ref(0), page=ref(1), stages=ref([]), courses=ref([]); const summary=reactive({total:0,mine:0,drafts:0,published:0});
+const loading=ref(true), error=ref(""), message=ref(""), messageError=ref(false), importOpen=ref(false), questions=ref([]), total=ref(0), page=ref(1), stages=ref([]), courses=ref([]); const summary=reactive({total:0,mine:0,drafts:0,published:0});
 const filters=reactive({scope:"all",search:"",stage:"",course:"",question_type:"",page_size:20}); const types=[{value:"choice",label:"选择题"},{value:"blank",label:"填空题"},{value:"calculation",label:"计算题"},{value:"proof",label:"证明题"},{value:"comprehensive",label:"综合题"}];
 function truncate(v,n){const s=String(v||"");return s.length>n?`${s.slice(0,n)}…`:s;} function statusText(v){return ({draft:"草稿",published:"已发布",archived:"已归档"})[v]||v;}
 async function loadQuestions(){loading.value=true;error.value="";try{const data=await apiGet("/api/teacher/questions",{...filters,page:page.value});questions.value=data.items||[];total.value=data.total||0;Object.assign(summary,data.summary||{});}catch(e){error.value=e.message;}finally{loading.value=false;}}
@@ -32,6 +33,6 @@ async function loadCoursesAndQuestions(){filters.course="";courses.value=filters
 async function publishQuestion(item){try{await apiPost(`/api/teacher/questions/${item.id}/publish`);messageError.value=false;message.value="题目已发布，可用于布置作业。";loadQuestions();}catch(e){messageError.value=true;message.value=e.message;}}
 async function archiveQuestion(item){if(!confirm("归档后将不再用于新作业，确定继续吗？"))return;try{await apiPost(`/api/teacher/questions/${item.id}/archive`);messageError.value=false;message.value="题目已归档。";loadQuestions();}catch(e){messageError.value=true;message.value=e.message;}}
 async function copyQuestion(item){try{const data=await apiPost(`/api/teacher/questions/${item.id}/copy`);messageError.value=false;message.value="已复制为你的草稿题，正在打开编辑器。";await router.push(`/teacher/questions/${data.id}/edit`);}catch(e){messageError.value=true;message.value=e.message;}}
-async function importFile(event){const file=event.target.files?.[0];if(!file)return;const form=new FormData();form.append("file",file);try{const data=await apiUpload("/api/teacher/question-imports",form);messageError.value=Boolean(data.error_count);message.value=`成功导入 ${data.created_count} 道草稿题${data.error_count?`，${data.error_count} 行失败`:""}。`;filters.scope="mine";resetLoad();}catch(e){messageError.value=true;message.value=e.message;}finally{event.target.value="";}}
+function handleImported(data){messageError.value=Boolean(data.error_count);message.value=`已导入 ${data.created_count} 道草稿题${data.duplicate_count?`，跳过 ${data.duplicate_count} 道重复题`:""}${data.error_count?`，${data.error_count} 道失败`:""}。`;filters.scope="mine";resetLoad();}
 onMounted(async()=>{try{stages.value=(await apiGet("/api/stages")).stages||[];}finally{loadQuestions();}});
 </script>

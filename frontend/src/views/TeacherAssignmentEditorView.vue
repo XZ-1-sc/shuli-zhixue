@@ -33,13 +33,14 @@
           <div><strong>按班级智能抽题</strong><small>按所选班级的阶段与课程，从已发布中文题库中随机抽取，已有选择会保留。</small></div>
           <label><span>数量</span><input v-model.number="randomCount" type="number" min="1" max="50" /></label>
           <button class="teacher-secondary-action" type="button" :disabled="randomizing" @click="randomSelect">{{ randomizing ? "抽取中…" : "随机选题" }}</button>
+          <button class="teacher-upload-paper-action" type="button" @click="openPaperImport">⇧ 上传试卷</button>
           <button type="button" :disabled="!selectedIds.length" @click="clearSelection">清空选择</button>
         </div>
         <p v-if="randomMessage" class="teacher-form-message" :class="{ 'is-error': randomError }">{{ randomMessage }}</p>
         <div v-if="loading" class="teacher-inline-empty">正在加载已发布题目…</div>
         <div v-else class="teacher-picker-list">
           <label v-for="item in questions" :key="item.id" :class="{ selected: selectedIds.includes(item.id) }">
-            <input v-model="selectedIds" type="checkbox" :value="item.id" />
+            <input v-model="selectedIds" type="checkbox" :value="item.id" :disabled="!selectedIds.includes(item.id) && selectedIds.length >= 100" />
             <span><small>{{ item.type_label }} · {{ item.stage }} · {{ item.course }}</small><strong>{{ item.question_text }}</strong><em>{{ item.knowledge_tag }} / {{ item.fine_tag }} · 难度 {{ item.difficulty }}</em></span>
             <input v-if="selectedIds.includes(item.id)" v-model.number="pointMap[item.id]" class="point-input" type="number" min="1" max="100" @click.stop />
             <b>分</b>
@@ -55,6 +56,7 @@
         <button class="teacher-primary-action" :disabled="saving || !selectedIds.length" type="button" @click="save(true)">{{ saving ? "处理中…" : "发布给学生" }}</button>
       </footer>
     </form>
+    <QuestionImportDialog :open="paperImportOpen" mode="assignment" :initial-stage="selectedClass?.stage || ''" :initial-course="selectedClass?.course || ''" :selection-limit="Math.max(0, 100 - selectedIds.length)" @close="paperImportOpen = false" @imported="handlePaperImported" />
   </TeacherPageShell>
 </template>
 
@@ -63,6 +65,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { apiGet, apiPost, apiPut } from "../api/client";
 import TeacherPageShell from "../components/TeacherPageShell.vue";
+import QuestionImportDialog from "../components/QuestionImportDialog.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -77,6 +80,7 @@ const randomCount = ref(10);
 const randomizing = ref(false);
 const randomMessage = ref("");
 const randomError = ref(false);
+const paperImportOpen = ref(false);
 const loading = ref(true);
 const saving = ref(false);
 const error = ref("");
@@ -91,6 +95,7 @@ const form = reactive({
   show_analysis_after_submit: true
 });
 const totalPoints = computed(() => selectedIds.value.reduce((sum, id) => sum + Number(pointMap[id] || 10), 0));
+const selectedClass = computed(() => classes.value.find((item) => Number(item.id) === Number(form.class_id)) || null);
 
 watch(selectedIds, (ids) => ids.forEach((id) => { if (!pointMap[id]) pointMap[id] = 10; }));
 
@@ -117,7 +122,13 @@ async function randomSelect() {
   }
   randomizing.value = true;
   try {
-    const requested = Math.max(1, Math.min(50, Number(randomCount.value || 10)));
+    const remaining = 100 - selectedIds.value.length;
+    if (remaining <= 0) {
+      randomError.value = true;
+      randomMessage.value = "每份试卷最多 100 道题，请先移除部分题目。";
+      return;
+    }
+    const requested = Math.max(1, Math.min(remaining, 50, Number(randomCount.value || 10)));
     let data = await apiGet("/api/teacher/questions/random", {
       count: requested,
       stage: selectedClass.stage,
@@ -143,6 +154,33 @@ async function randomSelect() {
   } finally {
     randomizing.value = false;
   }
+}
+
+function openPaperImport() {
+  if (!selectedClass.value) {
+    randomError.value = true;
+    randomMessage.value = "请先选择班级，系统会用班级的阶段和课程归类试卷题目。";
+    return;
+  }
+  if (selectedIds.value.length >= 100) {
+    randomError.value = true;
+    randomMessage.value = "每份试卷最多 100 道题，请先移除部分题目再上传试卷。";
+    return;
+  }
+  paperImportOpen.value = true;
+}
+
+function handlePaperImported(data) {
+  const imported = data.questions || [];
+  const ids = imported.map((item) => Number(item.id));
+  selectedIds.value = Array.from(new Set([...selectedIds.value.map(Number), ...ids]));
+  questions.value = [...imported, ...questions.value.filter((item) => !ids.includes(Number(item.id)))];
+  imported.forEach((item) => { pointMap[item.id] = Number(item.points || 10); });
+  if (!form.title && data.source_file_name) {
+    form.title = String(data.source_file_name).replace(/\.(pdf|xlsx?|csv)$/i, "");
+  }
+  randomError.value = Boolean(data.error_count);
+  randomMessage.value = `已从试卷加入 ${imported.length} 道题${data.reused_count ? `（复用题库已有 ${data.reused_count} 道）` : ""}${data.duplicate_count ? `，跳过 ${data.duplicate_count} 道重复题` : ""}。`;
 }
 
 function clearSelection() {

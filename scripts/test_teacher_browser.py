@@ -213,19 +213,25 @@ def main() -> None:
         wait.until(lambda current: "新的班级邀请码已生成" in current.find_element(By.TAG_NAME, "body").text)
         screenshot(driver, "03-class-created")
 
-        archive = driver.find_element(
-            By.XPATH, "//button[contains(@class,'danger') and normalize-space()='归档']"
-        )
-        archive.click()
-        wait.until(expected.alert_is_present()).accept()
-        wait.until(lambda current: class_name not in current.find_element(By.TAG_NAME, "body").text)
-
         click_nav(driver, wait, "学生学情", "/teacher/students")
         assert_page_healthy(driver, "学生学情")
         screenshot(driver, "04-students")
 
         click_nav(driver, wait, "题库管理", "/teacher/questions")
         assert_page_healthy(driver, "题库管理")
+        wait.until(
+            expected.element_to_be_clickable(
+                (By.XPATH, "//button[contains(normalize-space(),'文件导入')]")
+            )
+        ).click()
+        import_dialog = wait.until(
+            expected.visibility_of_element_located((By.CSS_SELECTOR, ".teacher-import-dialog"))
+        )
+        assert "从文件导入题目" in import_dialog.text
+        assert ".pdf" in import_dialog.find_element(By.CSS_SELECTOR, "input[type='file']").get_attribute("accept")
+        screenshot(driver, "05-question-import")
+        import_dialog.find_element(By.CSS_SELECTOR, "button[aria-label='关闭']").click()
+        wait.until(expected.invisibility_of_element_located((By.CSS_SELECTOR, ".teacher-import-dialog")))
         wait.until(
             expected.element_to_be_clickable(
                 (By.CSS_SELECTOR, "a[href='/teacher/questions/new']")
@@ -261,6 +267,18 @@ def main() -> None:
             or "暂无可用中文题" in current.find_element(By.TAG_NAME, "body").text
         )
         assert "已随机加入" in driver.find_element(By.TAG_NAME, "body").text
+        upload_paper = wait.until(
+            expected.element_to_be_clickable(
+                (By.XPATH, "//button[contains(normalize-space(),'上传试卷')]")
+            )
+        )
+        upload_paper.click()
+        paper_dialog = wait.until(
+            expected.visibility_of_element_located((By.CSS_SELECTOR, ".teacher-import-dialog"))
+        )
+        assert "上传试卷并加入当前作业" in paper_dialog.text
+        screenshot(driver, "06b-paper-import")
+        paper_dialog.find_element(By.CSS_SELECTOR, "button[aria-label='关闭']").click()
         screenshot(driver, "06-assignment-editor")
 
         click_nav(driver, wait, "批改中心", "/teacher/review")
