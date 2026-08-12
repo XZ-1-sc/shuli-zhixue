@@ -17,10 +17,7 @@ def _json_safe(value: Any) -> Any:
 
 
 def _row_to_record(row: Any) -> dict[str, Any]:
-    return {
-        key: _json_safe(value)
-        for key, value in dict(row._mapping).items()
-    }
+    return {key: _json_safe(value) for key, value in dict(row._mapping).items()}
 
 
 def _fetch_recent_records(user_id: int, limit: int = 20) -> list[dict[str, Any]]:
@@ -30,29 +27,32 @@ def _fetch_recent_records(user_id: int, limit: int = 20) -> list[dict[str, Any]]
           pr.id AS record_id,
           pr.task_id,
           pr.question_id,
-          q.module,
+          q.stage,
+          q.course,
           q.knowledge_tag,
+          q.fine_tag,
+          q.question_type,
           q.difficulty,
           pr.selected_answer,
+          pr.answer_text,
           q.correct_answer,
           pr.is_correct,
+          pr.score,
           pr.time_spent_seconds,
           pr.practice_mode,
           pr.answered_at
         FROM practice_records AS pr
-        LEFT JOIN questions AS q ON q.id = pr.question_id
+        JOIN questions AS q ON q.id = pr.question_id
         WHERE pr.user_id = :user_id
         ORDER BY pr.answered_at DESC, pr.id DESC
         LIMIT :limit
         """
     )
-
     try:
         with SessionLocal() as db:
             rows = db.execute(query, {"user_id": user_id, "limit": limit}).fetchall()
     except SQLAlchemyError:
         return []
-
     return [_row_to_record(row) for row in rows]
 
 
@@ -61,12 +61,7 @@ async def run_pipeline(user_id: int) -> dict[str, Any]:
     negotiation = await asyncio.to_thread(negotiate_strategy, user_id, user_records)
     strategy_text = negotiation["strategy"]
     recommended_questions = await asyncio.to_thread(recommend, strategy_text)
-    recommended_question_ids = [
-        int(question["id"])
-        for question in recommended_questions
-        if question.get("id") is not None
-    ]
-
+    recommended_question_ids = [int(question["id"]) for question in recommended_questions if question.get("id")]
     return {
         "user_id": user_id,
         "recent_record_count": len(user_records),

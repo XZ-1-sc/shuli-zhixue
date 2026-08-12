@@ -1,0 +1,746 @@
+{
+  "name": "大学数学知识图谱",
+  "description": "基于 WeBWorK OPL 开放题源主题整理，覆盖本科数学四个阶段。",
+  "stages": [
+    {
+      "name": "大一",
+      "order": 1,
+      "title": "基础建模期",
+      "goal": "建立极限、导数、矩阵、逻辑和证明语言的底层直觉。",
+      "children": [
+        {
+          "name": "线性代数基础",
+          "children": [
+            {
+              "name": "Abstract vector spaces",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Inner products",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Matrices",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Systems of linear equations",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "证明方法入门",
+          "children": [
+            {
+              "name": "First order logic",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Operations on sets",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Propositional logic",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Relations between sets",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "高等数学上",
+          "children": [
+            {
+              "name": "Applications of differentiation",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Differentiation",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Integrals",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Limits and continuity",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Techniques of integration",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "大二",
+      "order": 2,
+      "title": "多变量与概率期",
+      "goal": "掌握多元微积分、级数、微分方程和概率统计的核心工具。",
+      "children": [
+        {
+          "name": "概率论与数理统计",
+          "children": [
+            {
+              "name": "Confidence intervals",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Continuous distributions",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Discrete distributions",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Experimental design",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Exploratory data analysis/descriptive statistics",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Hypothesis tests",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Laws, theory",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Random variables",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Sample Space",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Sample survey methods",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Sampling distributions",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Simple linear regression",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "级数与常微分方程",
+          "children": [
+            {
+              "name": "First order differential equations",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Higher order differential equations",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Infinite sequences and series",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Introductory concepts",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Laplace transforms",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Systems of differential equations",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "高等数学下",
+          "children": [
+            {
+              "name": "Calculus of vector valued functions",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Concepts for multivariable functions",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Differentiation of multivariable functions",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "大三",
+      "order": 3,
+      "title": "专业核心期",
+      "goal": "训练抽象结构、严格分析、复变函数和数值思维。",
+      "children": [
+        {
+          "name": "复变函数",
+          "children": [
+            {
+              "name": "Arithmetic",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "实变函数",
+          "children": [
+            {
+              "name": "Limits and accumulation points",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "抽象代数",
+          "children": [
+            {
+              "name": "Abstract algebra",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Fields and polynomials",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Groups",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "大四",
+      "order": 4,
+      "title": "综合提升期",
+      "goal": "将高阶课程、建模、优化和综合应用连接成问题解决框架。",
+      "children": [
+        {
+          "name": "数学建模与综合专题",
+          "children": [
+            {
+              "name": "Algorithms",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Coloring",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Counting",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Linear programming",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Matrices",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Recurrence relations",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Terminology",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            },
+            {
+              "name": "Walks",
+              "children": [
+                {
+                  "name": "基础识别"
+                },
+                {
+                  "name": "方法应用"
+                },
+                {
+                  "name": "错因复盘"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

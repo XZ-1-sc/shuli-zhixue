@@ -14,6 +14,7 @@ else:
 try:
     from dotenv import load_dotenv
 except ImportError:
+
     def load_dotenv(*args: Any, **kwargs: Any) -> None:
         return None
 
@@ -24,7 +25,7 @@ ENV_FILE = BACKEND_DIR / ".env"
 load_dotenv(ENV_FILE)
 
 DEFAULT_MODEL = os.getenv("LLM_MODEL", "deepseek-chat")
-DEFAULT_FALLBACK_REPLY = "系统繁忙，请稍后再试"
+DEFAULT_FALLBACK_REPLY = "小逻暂时连不上大模型。你可以先完成一组基础题，我会根据本地做题记录继续给出诊断和复盘建议。"
 
 
 def call_llm(
@@ -58,7 +59,7 @@ def call_llm(
             response = requests.post(url, headers=headers, json=payload, timeout=timeout)
             response.raise_for_status()
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+            return str(data["choices"][0]["message"]["content"])
         except (RequestException, KeyError, IndexError, ValueError):
             if attempt < retries:
                 time.sleep(2)

@@ -17,7 +17,11 @@ load_dotenv(ENV_FILE)
 class Settings(BaseSettings):
     database_url: str
     docker_database_url: str | None = None
+    math_brain_docker: bool = False
     xingce_docker: bool = False
+    teacher_invite_code: str = ""
+    upload_dir: str = str(BACKEND_DIR / "uploads")
+    max_answer_image_bytes: int = 8 * 1024 * 1024
 
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
@@ -33,7 +37,7 @@ def resolve_database_url(config: Settings) -> str:
     if config.docker_database_url:
         return config.docker_database_url
 
-    if config.xingce_docker:
+    if config.math_brain_docker or config.xingce_docker:
         url = make_url(config.database_url)
         if url.host in {"localhost", "127.0.0.1"}:
             return url.set(host="host.docker.internal").render_as_string(hide_password=False)

@@ -1,4 +1,4 @@
-# 行测智脑临时公网访问指南
+# 数理智学临时公网访问指南
 
 这个方案不需要部署服务器。你的电脑负责运行项目，Cloudflare Tunnel 负责生成一个临时公网链接。
 
@@ -18,7 +18,7 @@ Docker 后端需要通过 `host.docker.internal` 访问你电脑上的 MySQL。
 如果你想手动指定 Docker 专用数据库地址，可以在 PowerShell 设置：
 
 ```powershell
-$env:DOCKER_DATABASE_URL="mysql+pymysql://root:%40你的密码@host.docker.internal:3306/xingce"
+$env:DOCKER_DATABASE_URL="mysql+pymysql://root:%40你的密码@host.docker.internal:3306/math_brain"
 ```
 
 注意：
@@ -31,15 +31,15 @@ $env:DOCKER_DATABASE_URL="mysql+pymysql://root:%40你的密码@host.docker.inter
 如果 root 用户无法从 Docker 连接 MySQL，可以新建一个只用于本项目的账号：
 
 ```sql
-CREATE USER 'xingce_app'@'%' IDENTIFIED BY '你的新密码';
-GRANT ALL PRIVILEGES ON xingce.* TO 'xingce_app'@'%';
+CREATE USER 'math_app'@'%' IDENTIFIED BY '你的新密码';
+GRANT ALL PRIVILEGES ON math_brain.* TO 'math_app'@'%';
 FLUSH PRIVILEGES;
 ```
 
 然后手动指定连接地址：
 
 ```powershell
-$env:DOCKER_DATABASE_URL="mysql+pymysql://xingce_app:你的新密码@host.docker.internal:3306/xingce"
+$env:DOCKER_DATABASE_URL="mysql+pymysql://math_app:你的新密码@host.docker.internal:3306/math_brain"
 ```
 
 ## 2. 启动项目
@@ -87,14 +87,17 @@ https://xxxx.trycloudflare.com
 也可以用 compose 自带的 tunnel profile：
 
 ```powershell
-docker compose --profile tunnel up tunnel
+docker compose --profile tunnel up -d tunnel
+
+# 查看本次生成的公网地址
+docker compose logs tunnel
 ```
 
 ## 4. 验证流程
 
 在外网电脑打开 tunnel 链接后，依次测试：
 
-- 登录账号：`树虫 / 123456`
+- 使用你自己的学生或教师测试账号登录
 - 首页加载今日必做和雷达图
 - 进入方案页
 - 进入做题页并提交题目

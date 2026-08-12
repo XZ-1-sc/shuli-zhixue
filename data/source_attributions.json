@@ -1,0 +1,23 @@
+[
+  {
+    "source_name": "WeBWorK Open Problem Library",
+    "source_url": "https://github.com/openwebwork/webwork-open-problem-library",
+    "license_name": "Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported",
+    "license_url": "http://creativecommons.org/licenses/by-nc-sa/3.0/",
+    "usage_note": "题目来源；本项目保留源路径与许可证信息。"
+  },
+  {
+    "source_name": "MIT OCW 18.01SC Single Variable Calculus",
+    "source_url": "https://ocw.mit.edu/courses/18-01sc-single-variable-calculus-fall-2010/",
+    "license_name": "Creative Commons BY-NC-SA",
+    "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+    "usage_note": "课程结构参考。"
+  },
+  {
+    "source_name": "OpenStax",
+    "source_url": "https://openstax.org/subjects",
+    "license_name": "Creative Commons Attribution",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "usage_note": "开放教材结构参考。"
+  }
+]

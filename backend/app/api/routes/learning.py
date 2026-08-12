@@ -1,1050 +1,1976 @@
 import asyncio
-import csv
 import json
-import random
+import math
+import re
 import uuid
 from datetime import date
-from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from ...agents.diagnostician import diagnose
-from ...agents.navigator import recommend as recommend_questions
 from ...database.session import SessionLocal
-from ...orchestrator import _fetch_recent_records
+from ...security import current_session_user
 from ...utils.llm_client import call_llm
 
 
-router = APIRouter(prefix="/api", tags=["learning"])
-ROOT_DIR = Path(__file__).resolve().parents[4]
-QUESTIONS_CSV = ROOT_DIR / "data" / "questions.csv"
+router = APIRouter(prefix="/api", tags=["math-learning"])
 
-MODULE_LABELS = ["言语", "判断", "资料", "数量", "常识"]
-DEFAULT_SCORES = {
-    "言语": 76,
-    "判断": 54,
-    "资料": 68,
-    "数量": 61,
-    "常识": 72,
-}
-MODULE_ALIASES = {
-    "言语": ["言语", "言语理解", "言语理解与表达"],
-    "判断": ["判断", "判断推理"],
-    "资料": ["资料", "资料分析"],
-    "数量": ["数量", "数量关系"],
-    "常识": ["常识", "常识判断"],
+TYPE_LABELS = {
+    "choice": "选择题",
+    "blank": "填空题",
+    "calculation": "计算题",
+    "proof": "证明题",
+    "comprehensive": "综合题",
 }
 
-DEFAULT_STRATEGY = "建议主攻模块：判断推理（逻辑判断） > 资料分析（比重计算）"
-CHAT_SYSTEM_PROMPT = (
-    "你是行测智脑里的小逻，定位是冷静、具体、可执行的备考助手。"
-    "回答要短，优先给下一步动作；如果用户问学习规划，要结合上下文连续对话。"
-)
+KNOWLEDGE_NAME_MAP = {
+    "Limits": "极限",
+    "Limits and continuity": "极限与连续",
+    "Differentiation": "导数",
+    "Applications of differentiation": "导数应用",
+    "Integrals": "积分",
+    "Techniques of integration": "积分方法",
+    "Matrices": "矩阵",
+    "Systems of linear equations": "线性方程组",
+    "Abstract vector spaces": "向量空间",
+    "Inner products": "内积",
+    "Determinants": "行列式",
+    "Eigenvalues": "特征值",
+    "Discrete distributions": "离散分布",
+    "Continuous distributions": "连续分布",
+    "Confidence intervals": "置信区间",
+    "Experimental design": "试验设计",
+    "Exploratory data analysis/descriptive statistics": "描述统计",
+    "Hypothesis tests": "假设检验",
+    "Laws, theory": "概率定理",
+    "Arithmetic": "复数运算",
+    "Limits and accumulation points": "极限点",
+    "Abstract algebra": "抽象代数",
+    "Fields and polynomials": "域与多项式",
+    "Groups": "群",
+    "Counting": "计数方法",
+    "Linear programming": "线性规划",
+    "Recurrence relations": "递推关系",
+    "Terminology": "建模术语",
+    "Walks": "路径与图",
+    "First order logic": "一阶逻辑",
+    "Operations on sets": "集合运算",
+    "Propositional logic": "命题逻辑",
+    "Relations between sets": "集合关系",
+}
+
+
+def _display_knowledge_name(value: Any) -> str:
+    raw = re.sub(r"\s+", " ", str(value or "").strip())
+    if not raw:
+        return "待整理知识点"
+    if raw in KNOWLEDGE_NAME_MAP:
+        return KNOWLEDGE_NAME_MAP[raw]
+    if re.search(r"[A-Za-z]", raw) and not re.search(r"[\u4e00-\u9fff]", raw):
+        return "待整理知识点"
+    return raw
+
+
+def _is_unmapped_english_label(value: Any) -> bool:
+    raw = re.sub(r"\s+", " ", str(value or "").strip())
+    return bool(raw and raw not in KNOWLEDGE_NAME_MAP and re.search(r"[A-Za-z]", raw) and not re.search(r"[\u4e00-\u9fff]", raw))
+
+
+def _mastery_status(score: int | float | None) -> str:
+    if score is None:
+        return "untested"
+    if score >= 80:
+        return "good"
+    if score >= 50:
+        return "medium"
+    return "weak"
+
+CHAT_SYSTEM_PROMPT = """
+你是“数理智学”里的小逻，一名大学数学学习助教。
+你的任务是帮助本科阶段学生诊断薄弱点、解释错题、规划学习顺序和安排复习节奏。
+回答要具体、简洁、可执行。遇到证明题时优先给思路和关键步骤，不直接堆长篇答案。
+如果用户问学习规划，要结合阶段、课程、薄弱知识点和最近做题记录。
+""".strip()
 
 
 class ChatRequest(BaseModel):
     user_id: int = Field(default=1, ge=1)
-    message: str = Field(min_length=1, max_length=2000)
+    message: str = Field(min_length=1, max_length=3000)
     session_id: str | None = Field(default=None, max_length=64)
 
 
-class StudyPlanRequest(BaseModel):
+class GoalRequest(BaseModel):
     user_id: int = Field(ge=1)
-    exam_type: str = Field(min_length=1, max_length=64)
-    job_category: str = Field(min_length=1, max_length=128)
-    plan_name: str = Field(min_length=1, max_length=128)
+    target_course: str = Field(default="高等数学上", min_length=1, max_length=128)
+    target_stage: str = Field(default="大一", min_length=1, max_length=16)
+    weekly_hours: float = Field(default=8.0, ge=0.5, le=80)
+    exam_date: date | None = None
 
 
-class UserGoalRequest(BaseModel):
+class NoteRequest(BaseModel):
     user_id: int = Field(ge=1)
-    target_score: float = Field(ge=0, le=150)
-    exam_date: date
-    target_exam: str = Field(default="国考", min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=160)
+    content: str = Field(min_length=1, max_length=6000)
+    course: str | None = Field(default=None, max_length=128)
+    knowledge_tag: str | None = Field(default=None, max_length=160)
+
+
+class NoteUpdateRequest(BaseModel):
+    user_id: int = Field(ge=1)
+    title: str | None = Field(default=None, min_length=1, max_length=160)
+    content: str | None = Field(default=None, min_length=1, max_length=6000)
+    course: str | None = Field(default=None, max_length=128)
+    knowledge_tag: str | None = Field(default=None, max_length=160)
 
 
 class AnswerSubmissionRequest(BaseModel):
     user_id: int = Field(ge=1)
     task_id: str = Field(min_length=1, max_length=64)
     question_id: int = Field(ge=1)
-    selected_answer: str | None = Field(default=None, pattern="^[ABCD]$")
-    answer_text: str | None = Field(default=None, max_length=3000)
+    selected_answer: str | None = Field(default=None, max_length=16)
+    answer_text: str | None = Field(default=None, max_length=6000)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=5)
     time_spent_seconds: int = Field(default=0, ge=0)
-    practice_mode: str = Field(default="custom", pattern="^(daily|chapter|mock|wrong_book|custom)$")
+    practice_mode: str = Field(default="custom", pattern="^(daily|chapter|mock|wrong_book|custom|assessment)$")
 
 
-def _short_module_name(module: Any) -> str | None:
-    module_text = str(module or "")
-    for short_name, aliases in MODULE_ALIASES.items():
-        if any(alias in module_text for alias in aliases):
-            return short_name
-    return None
+class AssessmentStartRequest(BaseModel):
+    user_id: int = Field(ge=1)
+    stage: str | None = Field(default=None, max_length=16)
+    limit: int = Field(default=12, ge=5, le=30)
+    restart: bool = False
 
 
-def _scores_from_records(records: list[dict[str, Any]]) -> dict[str, int]:
-    stats = {
-        module: {"total": 0, "correct": 0}
-        for module in MODULE_LABELS
-    }
-
-    for record in records:
-        module = _short_module_name(record.get("module"))
-        if not module:
-            continue
-        stats[module]["total"] += 1
-        stats[module]["correct"] += int(bool(record.get("is_correct")))
-
-    scores: dict[str, int] = {}
-    for module, item in stats.items():
-        if item["total"] == 0:
-            scores[module] = DEFAULT_SCORES[module]
-            continue
-        scores[module] = round(item["correct"] / item["total"] * 100)
-
-    return scores
+def _json_safe(value: Any) -> Any:
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
 
 
-def _fallback_recommendations() -> list[dict[str, Any]]:
-    return [
-        {
-            "id": 1,
-            "title": "逻辑判断加强削弱 10题",
-            "module": "判断推理",
-            "knowledge_tag": "逻辑判断",
-            "difficulty": 3,
-        },
-        {
-            "id": 2,
-            "title": "资料分析比重计算 15题",
-            "module": "资料分析",
-            "knowledge_tag": "比重计算",
-            "difficulty": 2,
-        },
-        {
-            "id": 3,
-            "title": "逻辑填空成语辨析 20题",
-            "module": "言语理解与表达",
-            "knowledge_tag": "逻辑填空",
-            "difficulty": 3,
-        },
-        {
-            "id": 4,
-            "title": "图形推理规律训练 10题",
-            "module": "判断推理",
-            "knowledge_tag": "图形推理",
-            "difficulty": 3,
-        },
-        {
-            "id": 5,
-            "title": "常识判断速记 12题",
-            "module": "常识判断",
-            "knowledge_tag": "常识综合",
-            "difficulty": 2,
-        },
-    ]
-
-
-SCORE_LINE_GROUPS = [
-    {
-        "province": "国考",
-        "items": [
-            {"year": 2025, "exam": "中央机关及直属机构", "category": "综合管理类", "score": 121.4},
-            {"year": 2024, "exam": "中央机关及直属机构", "category": "行政执法类", "score": 118.7},
-            {"year": 2023, "exam": "中央机关及直属机构", "category": "地市级", "score": 116.2},
-            {"year": 2022, "exam": "中央机关及直属机构", "category": "副省级", "score": 124.1},
-        ],
-    },
-    {
-        "province": "北京",
-        "items": [
-            {"year": 2025, "exam": "北京市考", "category": "市级机关", "score": 137.5},
-            {"year": 2024, "exam": "北京市考", "category": "区级机关", "score": 132.8},
-            {"year": 2023, "exam": "北京市考", "category": "基层岗位", "score": 126.6},
-        ],
-    },
-    {
-        "province": "广东",
-        "items": [
-            {"year": 2025, "exam": "广东省考", "category": "县级以上机关", "score": 74.2},
-            {"year": 2024, "exam": "广东省考", "category": "珠三角岗位", "score": 78.6},
-            {"year": 2023, "exam": "广东省考", "category": "乡镇岗位", "score": 66.4},
-        ],
-    },
-    {
-        "province": "江苏",
-        "items": [
-            {"year": 2025, "exam": "江苏省考", "category": "A类", "score": 131.2},
-            {"year": 2024, "exam": "江苏省考", "category": "B类", "score": 126.5},
-            {"year": 2023, "exam": "江苏省考", "category": "C类", "score": 121.8},
-        ],
-    },
-    {
-        "province": "浙江",
-        "items": [
-            {"year": 2025, "exam": "浙江省考", "category": "综合类", "score": 132.1},
-            {"year": 2024, "exam": "浙江省考", "category": "基层类", "score": 127.4},
-            {"year": 2023, "exam": "浙江省考", "category": "行政执法类", "score": 123.6},
-        ],
-    },
-    {
-        "province": "山东",
-        "items": [
-            {"year": 2025, "exam": "山东省考", "category": "省直机关", "score": 72.8},
-            {"year": 2024, "exam": "山东省考", "category": "市县机关", "score": 68.5},
-            {"year": 2023, "exam": "山东省考", "category": "乡镇岗位", "score": 64.9},
-        ],
-    },
-    {
-        "province": "四川",
-        "items": [
-            {"year": 2025, "exam": "四川省考", "category": "综合管理", "score": 70.6},
-            {"year": 2024, "exam": "四川省考", "category": "行政执法", "score": 66.8},
-            {"year": 2023, "exam": "四川省考", "category": "基层治理", "score": 63.7},
-        ],
-    },
-    {
-        "province": "河南",
-        "items": [
-            {"year": 2025, "exam": "河南省考", "category": "省直机关", "score": 67.4},
-            {"year": 2024, "exam": "河南省考", "category": "市县机关", "score": 64.1},
-            {"year": 2023, "exam": "河南省考", "category": "乡镇机关", "score": 60.5},
-        ],
-    },
-]
-
-PLAN_OPTIONS = [
-    {
-        "exam_type": "国考",
-        "job_category": "行政执法类",
-        "plan_name": "国考执法冲刺方案",
-        "focus": ["资料分析速度", "判断推理稳定性", "申论热点联动"],
-    },
-    {
-        "exam_type": "国考",
-        "job_category": "地市级综合管理",
-        "plan_name": "地市级稳分方案",
-        "focus": ["言语主旨题", "逻辑判断", "常识时政"],
-    },
-    {
-        "exam_type": "省考",
-        "job_category": "省直机关",
-        "plan_name": "省直高分方案",
-        "focus": ["数量关系取舍", "资料分析满分率", "判断推理难题"],
-    },
-    {
-        "exam_type": "省考",
-        "job_category": "乡镇基层",
-        "plan_name": "基层岗位提速方案",
-        "focus": ["常识判断", "言语理解", "资料分析基础题"],
-    },
-    {
-        "exam_type": "事业单位",
-        "job_category": "综合岗",
-        "plan_name": "事业单位综合备考方案",
-        "focus": ["公共基础知识", "言语表达", "判断推理基础"],
-    },
-]
-
-PRACTICE_MODULES = [
-    {
-        "module": "言语理解与表达",
-        "short_name": "言语",
-        "types": ["逻辑填空", "片段阅读", "语句排序", "下文推断", "标题提炼"],
-    },
-    {
-        "module": "判断推理",
-        "short_name": "判断",
-        "types": ["逻辑判断", "图形推理", "定义判断", "类比推理"],
-    },
-    {
-        "module": "资料分析",
-        "short_name": "资料",
-        "types": ["增长率", "比重计算", "平均数", "倍数与比较", "综合分析"],
-    },
-    {
-        "module": "数量关系",
-        "short_name": "数量",
-        "types": ["工程问题", "行程问题", "几何问题", "排列组合与概率", "数量计算"],
-    },
-    {
-        "module": "常识判断",
-        "short_name": "常识",
-        "types": ["法律常识", "时政热点", "经济常识", "科技与自然", "历史人文"],
-    },
-]
-
-SUPPLEMENTAL_ID_BASE = 9_000_000
-SUPPLEMENTAL_QUESTIONS = [
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 1,
-        "question_type": "short_answer",
-        "question_text": "简答题：资料分析中遇到“现期比重”和“基期比重”时，分别应如何识别题干关键词？",
-        "module": "资料分析",
-        "knowledge_tag": "比重计算",
-        "reference_answer": "现期比重通常问当前时期某部分占整体的比重；基期比重通常出现上年、去年、基期等表述，需要结合增长率还原基期部分和整体。",
-        "reference_points": ["现期", "基期", "部分", "整体", "增长率"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 2,
-        "question_type": "short_answer",
-        "question_text": "简答题：逻辑判断中的“加强削弱”题，作答前应先完成哪两个判断？",
-        "module": "判断推理",
-        "knowledge_tag": "逻辑判断",
-        "reference_answer": "先找出论点和论据，再判断二者之间的论证关系。加强题要补强关系或支持论点，削弱题要切断关系、反驳论点或指出反例。",
-        "reference_points": ["论点", "论据", "论证关系", "加强", "削弱"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 3,
-        "question_type": "short_answer",
-        "question_text": "简答题：言语理解中做主旨概括题时，如何避免被例子、背景和转折前内容干扰？",
-        "module": "言语理解与表达",
-        "knowledge_tag": "片段阅读",
-        "reference_answer": "应优先找主题词和结构关系，重点关注转折后、结论句、必要条件句等核心信息；例子和背景多用于服务观点，不能替代主旨。",
-        "reference_points": ["主题词", "结构", "转折后", "结论", "例子"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 4,
-        "question_type": "short_answer",
-        "question_text": "简答题：数量关系考试中，什么情况下应果断跳过一道题？请写出至少三种信号。",
-        "module": "数量关系",
-        "knowledge_tag": "数量计算",
-        "reference_answer": "计算量明显过大、条件关系复杂且无法快速建模、读题超过一分钟仍无思路、选项差距小且无法估算时，应先跳过。",
-        "reference_points": ["计算量", "建模", "一分钟", "无思路", "估算"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 5,
-        "question_type": "short_answer",
-        "question_text": "简答题：常识判断复盘时，如何把错题整理成可复习的知识卡片？",
-        "module": "常识判断",
-        "knowledge_tag": "常识综合",
-        "reference_answer": "可记录题目考点、错误原因、正确知识点、相近易混点和一条例子，复习时按法律、时政、科技、人文等类别归档。",
-        "reference_points": ["考点", "错误原因", "正确知识点", "易混点", "分类"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 6,
-        "question_type": "analysis",
-        "question_text": "材料概括题：一次模拟后发现资料分析正确率高但耗时长，请分析可能原因，并给出两条提速策略。",
-        "module": "资料分析",
-        "knowledge_tag": "综合分析",
-        "reference_answer": "可能原因是公式不熟、定位材料慢、精算过多。策略包括先看问题再定位材料、常用公式自动化、优先估算和截位计算。",
-        "reference_points": ["公式", "定位", "精算", "估算", "截位"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 7,
-        "question_type": "short_answer",
-        "question_text": "简答题：言语理解中遇到成语辨析题，应从哪些角度判断一个成语是否适配语境？",
-        "module": "言语理解与表达",
-        "knowledge_tag": "成语辨析",
-        "reference_answer": "应结合语义轻重、感情色彩、适用对象、搭配习惯和语境逻辑判断。不能只看成语大意，还要看前后文是否存在转折、递进、因果等关系。",
-        "reference_points": ["语义轻重", "感情色彩", "适用对象", "搭配", "语境逻辑"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 8,
-        "question_type": "analysis",
-        "question_text": "材料分析题：某考生图形推理连续错题，请从观察顺序和常见规律两个角度，写出复盘方案。",
-        "module": "判断推理",
-        "knowledge_tag": "图形推理",
-        "reference_answer": "复盘时先固定观察顺序，如位置、数量、样式、属性、空间，再记录错题对应规律。常见规律包括点线面数量、对称性、旋转翻转、黑白运算、元素移动和立体展开。",
-        "reference_points": ["观察顺序", "数量", "属性", "旋转翻转", "黑白运算"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 9,
-        "question_type": "short_answer",
-        "question_text": "简答题：资料分析中计算增长率时，如何区分增长率、增长量和倍数关系？",
-        "module": "资料分析",
-        "knowledge_tag": "增长率计算",
-        "reference_answer": "增长率表示增长量相对基期量的比例，增长量表示现期量与基期量的差，倍数关系表示一个量是另一个量的几倍。读题时要关注百分号、增加了多少、是几倍等关键词。",
-        "reference_points": ["增长率", "增长量", "基期量", "倍数", "关键词"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 10,
-        "question_type": "analysis",
-        "question_text": "材料分析题：数量关系工程问题中，如果题干出现多人合作、效率变化和总量未知，应如何建模？",
-        "module": "数量关系",
-        "knowledge_tag": "工程问题",
-        "reference_answer": "通常把工程总量设为效率分母的最小公倍数，分别求出各主体效率，再按合作时间、单独时间或效率变化列方程。若选项差距明显，可结合代入和估算缩短计算。",
-        "reference_points": ["工程总量", "最小公倍数", "效率", "合作时间", "方程"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 11,
-        "question_type": "short_answer",
-        "question_text": "简答题：常识判断法律题复盘时，如何区分“记忆性错误”和“概念理解错误”？",
-        "module": "常识判断",
-        "knowledge_tag": "法律常识",
-        "reference_answer": "记忆性错误多是条文主体、时间、程序、权限记混；概念理解错误则是没有区分相近概念的适用条件和法律后果。复盘时要标注错因，并补一条例子帮助迁移。",
-        "reference_points": ["记忆性错误", "概念理解", "主体", "适用条件", "法律后果"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 12,
-        "question_type": "analysis",
-        "question_text": "材料分析题：语句排序题经常在首句和尾句判断上失误，请写出一套排除顺序。",
-        "module": "言语理解与表达",
-        "knowledge_tag": "语句排序",
-        "reference_answer": "先排除不适合做首句的代词指代句、补充说明句和结论承接句，再找时间顺序、逻辑顺序、话题一致和关联词配对，最后用尾句是否总结全文或自然收束来验证。",
-        "reference_points": ["首句", "代词指代", "逻辑顺序", "关联词", "尾句"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 13,
-        "question_type": "short_answer",
-        "question_text": "简答题：加强削弱题中，什么是“样本偏差”？它通常如何削弱论证？",
-        "module": "判断推理",
-        "knowledge_tag": "加强削弱",
-        "reference_answer": "样本偏差指论证所依据的样本不能代表总体，例如样本数量太少、来源单一或选择方式有倾向。它会削弱从样本推总体的结论可靠性。",
-        "reference_points": ["样本偏差", "代表性", "总体", "来源单一", "可靠性"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 14,
-        "question_type": "analysis",
-        "question_text": "材料分析题：资料分析平均数比较题中，如何快速判断平均数上升还是下降？",
-        "module": "资料分析",
-        "knowledge_tag": "平均数",
-        "reference_answer": "平均数等于总量除以份数。比较平均数变化时，可比较总量增长率和份数增长率；总量增长率大于份数增长率，平均数上升，反之下降。",
-        "reference_points": ["平均数", "总量", "份数", "增长率比较", "上升下降"],
-    },
-    {
-        "id": SUPPLEMENTAL_ID_BASE + 15,
-        "question_type": "short_answer",
-        "question_text": "简答题：数量关系行程问题中，遇到相遇、追及、环形跑道时，应优先写出哪些基本关系式？",
-        "module": "数量关系",
-        "knowledge_tag": "行程问题",
-        "reference_answer": "相遇问题常用路程和等于速度和乘时间，追及问题常用路程差等于速度差乘时间，环形跑道要判断同向追及还是反向相遇，并结合圈长建立关系。",
-        "reference_points": ["相遇", "追及", "速度和", "速度差", "圈长"],
-    },
-
-]
-
-
-def _normalize_session_id(session_id: str | None) -> str:
-    normalized = str(session_id or "").strip()
-    return normalized or str(uuid.uuid4())
-
-
-def _question_row_to_dict(row: Any) -> dict[str, Any]:
-    try:
-        mapping = dict(row)
-    except (TypeError, ValueError):
-        mapping = dict(row._mapping)
-    return {
-        "id": int(mapping["id"]),
-        "question_type": "choice",
-        "question_text": str(mapping["question_text"]),
-        "option_a": str(mapping["option_a"]),
-        "option_b": str(mapping["option_b"]),
-        "option_c": str(mapping["option_c"]),
-        "option_d": str(mapping["option_d"]),
-        "module": str(mapping["module"]),
-        "knowledge_tag": str(mapping.get("knowledge_tag") or "综合"),
-        "difficulty": int(mapping.get("difficulty") or 3),
-        "source_name": str(mapping.get("source_name") or ""),
-        "source_question_no": str(mapping.get("source_question_no") or ""),
-    }
-
-
-def _supplemental_matches(question: dict[str, Any], module: str | None, knowledge_tag: str | None) -> bool:
-    if module and module not in question["module"] and module not in question["knowledge_tag"]:
-        return False
-    if knowledge_tag and knowledge_tag not in question["knowledge_tag"] and question["knowledge_tag"] not in knowledge_tag:
-        return False
-    return True
-
-
-def _public_supplemental_question(question: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "id": question["id"],
-        "question_type": question["question_type"],
-        "question_text": question["question_text"],
-        "module": question["module"],
-        "knowledge_tag": question["knowledge_tag"],
-        "difficulty": 3,
-        "source_name": "补充主观题库",
-        "source_question_no": str(question["id"] - SUPPLEMENTAL_ID_BASE),
-    }
-
-
-def _load_csv_question_rows() -> list[dict[str, Any]]:
-    if not QUESTIONS_CSV.exists():
+def _parse_json_list(value: Any) -> list[str]:
+    if value is None:
         return []
-
-    with QUESTIONS_CSV.open("r", encoding="utf-8-sig", newline="") as file:
-        rows = list(csv.DictReader(file))
-
-    normalized: list[dict[str, Any]] = []
-    for index, row in enumerate(rows, start=1):
-        if not row.get("题干"):
-            continue
-        normalized.append(
-            {
-                "question_text": row.get("题干", ""),
-                "option_a": row.get("选项A", ""),
-                "option_b": row.get("选项B", ""),
-                "option_c": row.get("选项C", ""),
-                "option_d": row.get("选项D", ""),
-                "correct_answer": row.get("正确答案", "A"),
-                "module": row.get("所属模块", "行测"),
-                "knowledge_tag": row.get("知识点标签", "综合"),
-                "difficulty": 3,
-                "source_name": row.get("来源", "questions.csv"),
-                "source_question_no": row.get("题号", str(index)),
-                "source_url": row.get("来源链接", ""),
-            }
-        )
-    return normalized
-
-
-def _ensure_csv_questions_in_db(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    if not rows:
-        return []
-
-    select_query = text(
-        """
-        SELECT id, question_text, option_a, option_b, option_c, option_d,
-               module, knowledge_tag, difficulty, source_name, source_question_no
-        FROM questions
-        WHERE source_name = :source_name AND source_question_no = :source_question_no
-        LIMIT 1
-        """
-    )
-    insert_query = text(
-        """
-        INSERT INTO questions (
-          question_text, option_a, option_b, option_c, option_d, correct_answer,
-          module, knowledge_tag, difficulty, source_name, source_question_no, source_url
-        )
-        VALUES (
-          :question_text, :option_a, :option_b, :option_c, :option_d, :correct_answer,
-          :module, :knowledge_tag, :difficulty, :source_name, :source_question_no, :source_url
-        )
-        """
-    )
-    fetch_by_id_query = text(
-        """
-        SELECT id, question_text, option_a, option_b, option_c, option_d,
-               module, knowledge_tag, difficulty, source_name, source_question_no
-        FROM questions
-        WHERE id = :id
-        """
-    )
-
-    inserted: list[dict[str, Any]] = []
-    with SessionLocal() as db:
-        for row in rows:
-            existing = db.execute(
-                select_query,
-                {
-                    "source_name": row["source_name"],
-                    "source_question_no": row["source_question_no"],
-                },
-            ).mappings().first()
-            if existing:
-                inserted.append(_question_row_to_dict(existing))
-                continue
-
-            result = db.execute(insert_query, row)
-            db.commit()
-            stored = db.execute(fetch_by_id_query, {"id": int(result.lastrowid)}).mappings().first()
-            if stored:
-                inserted.append(_question_row_to_dict(stored))
-
-    return inserted
-
-
-def _fetch_random_questions_sync(
-    module: str | None,
-    knowledge_tag: str | None,
-    limit: int,
-) -> list[dict[str, Any]]:
-    is_subjective_filter = bool(
-        knowledge_tag
-        and any(prefix in knowledge_tag for prefix in ("简答题", "材料分析", "主观题"))
-    )
-    params: dict[str, Any] = {"limit": limit}
-    clauses = []
-    if module:
-        clauses.append("module LIKE :module")
-        params["module"] = f"%{module}%"
-    if knowledge_tag and not is_subjective_filter:
-        clauses.append("knowledge_tag LIKE :knowledge_tag")
-        params["knowledge_tag"] = f"%{knowledge_tag}%"
-
-    where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    query = text(
-        f"""
-        SELECT id, question_text, option_a, option_b, option_c, option_d,
-               module, knowledge_tag, difficulty, source_name, source_question_no
-        FROM questions
-        {where_sql}
-        ORDER BY RAND()
-        LIMIT :limit
-        """
-    )
-
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, tuple):
+        return [str(item) for item in value]
     try:
-        with SessionLocal() as db:
-            rows = db.execute(query, params).mappings().all()
-    except SQLAlchemyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="题库暂不可用，请检查 MySQL 和 questions 表。",
-        ) from exc
-
-    questions = [_question_row_to_dict(row) for row in rows]
-    if len(questions) < limit:
-        csv_rows = _load_csv_question_rows()
-        if module:
-            csv_rows = [row for row in csv_rows if module in row["module"] or module in row["knowledge_tag"]]
-        if knowledge_tag and not is_subjective_filter:
-            csv_rows = [row for row in csv_rows if knowledge_tag in row["knowledge_tag"]]
-        existing_keys = {
-            (question.get("source_name"), question.get("source_question_no"))
-            for question in questions
-        }
-        csv_rows = [
-            row for row in csv_rows
-            if (row["source_name"], row["source_question_no"]) not in existing_keys
-        ]
-        needed = max(limit - len(questions), 0)
-        sample = random.sample(csv_rows, min(needed, len(csv_rows))) if csv_rows else []
-        try:
-            questions.extend(_ensure_csv_questions_in_db(sample))
-        except SQLAlchemyError:
-            pass
-
-    supplemental = [
-        _public_supplemental_question(question)
-        for question in SUPPLEMENTAL_QUESTIONS
-        if _supplemental_matches(question, module, knowledge_tag)
-    ]
-    if supplemental:
-        random.shuffle(supplemental)
-        if is_subjective_filter:
-            questions = supplemental
-        elif len(questions) < limit:
-            questions.extend(supplemental[: max(limit - len(questions), 1)])
-        elif limit >= 5 and all(question.get("question_type") == "choice" for question in questions):
-            mixed_subjective = []
-            for question_type in ("short_answer", "analysis"):
-                matched = next(
-                    (question for question in supplemental if question.get("question_type") == question_type),
-                    None,
-                )
-                if matched:
-                    mixed_subjective.append(matched)
-            if mixed_subjective:
-                questions[-len(mixed_subjective):] = mixed_subjective
-        elif limit >= 3 and all(question.get("question_type") == "choice" for question in questions):
-            questions[-1] = supplemental[0]
-
-    random.shuffle(questions)
-    return questions[:limit]
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return [part.strip() for part in str(value).split(",") if part.strip()]
+    if isinstance(parsed, list):
+        return [str(item) for item in parsed]
+    return [str(parsed)]
 
 
-def _fetch_question_answer_sync(question_id: int) -> dict[str, Any] | None:
-    query = text(
-        """
-        SELECT id, correct_answer, module, knowledge_tag
-        FROM questions
-        WHERE id = :question_id
-        LIMIT 1
-        """
-    )
-    with SessionLocal() as db:
-        row = db.execute(query, {"question_id": question_id}).mappings().first()
-    return dict(row) if row else None
-
-
-def _supplemental_by_id(question_id: int) -> dict[str, Any] | None:
-    return next((question for question in SUPPLEMENTAL_QUESTIONS if question["id"] == question_id), None)
-
-
-def _ensure_subjective_records_table(db: Any) -> None:
-    db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS subjective_practice_records (
-              id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '主观题记录ID',
-              task_id VARCHAR(64) NOT NULL COMMENT '练习任务ID',
-              user_id BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
-              question_id BIGINT UNSIGNED NOT NULL COMMENT '主观题ID',
-              question_type VARCHAR(32) NOT NULL COMMENT '题型',
-              module VARCHAR(50) NOT NULL COMMENT '所属模块',
-              knowledge_tag VARCHAR(100) NOT NULL COMMENT '知识点标签',
-              answer_text LONGTEXT NOT NULL COMMENT '用户答案',
-              reference_answer LONGTEXT NOT NULL COMMENT '参考答案',
-              score TINYINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '关键词评分',
-              time_spent_seconds INT UNSIGNED NOT NULL DEFAULT 0 COMMENT '作答耗时（秒）',
-              practice_mode ENUM('daily','chapter','mock','wrong_book','custom') NOT NULL DEFAULT 'custom' COMMENT '练习模式',
-              answered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '作答时间',
-              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-              PRIMARY KEY (id),
-              KEY idx_subjective_user_time (user_id, answered_at),
-              KEY idx_subjective_task (task_id),
-              KEY idx_subjective_module_tag (module, knowledge_tag)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='主观题做题记录表'
-            """
-        )
-    )
-
-
-def _score_subjective_answer(answer_text: str, reference_points: list[str]) -> int:
-    if not answer_text.strip():
-        return 0
-    hit_count = sum(1 for point in reference_points if point and point in answer_text)
-    base = min(round(hit_count / max(len(reference_points), 1) * 85), 85)
-    length_bonus = 15 if len(answer_text.strip()) >= 40 else 5
-    return min(base + length_bonus, 100)
-
-
-def _submit_subjective_answer_sync(payload: AnswerSubmissionRequest, question: dict[str, Any]) -> dict[str, Any]:
-    answer_text = (payload.answer_text or "").strip()
-    if not answer_text:
-        raise HTTPException(status_code=422, detail="请先填写简答题答案。")
-
-    score = _score_subjective_answer(answer_text, question["reference_points"])
-    query = text(
-        """
-        INSERT INTO subjective_practice_records (
-          task_id, user_id, question_id, question_type, module, knowledge_tag,
-          answer_text, reference_answer, score, time_spent_seconds, practice_mode
-        )
-        VALUES (
-          :task_id, :user_id, :question_id, :question_type, :module, :knowledge_tag,
-          :answer_text, :reference_answer, :score, :time_spent_seconds, :practice_mode
-        )
-        """
-    )
+def _parse_json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if not value:
+        return {}
     try:
-        with SessionLocal() as db:
-            _ensure_subjective_records_table(db)
-            db.execute(
-                query,
-                {
-                    "task_id": payload.task_id,
-                    "user_id": payload.user_id,
-                    "question_id": payload.question_id,
-                    "question_type": question["question_type"],
-                    "module": question["module"],
-                    "knowledge_tag": question["knowledge_tag"],
-                    "answer_text": answer_text,
-                    "reference_answer": question["reference_answer"],
-                    "score": score,
-                    "time_spent_seconds": payload.time_spent_seconds,
-                    "practice_mode": payload.practice_mode,
-                },
-            )
-            db.commit()
-    except SQLAlchemyError as exc:
-        raise HTTPException(status_code=503, detail="主观题记录保存失败。") from exc
+        parsed = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
-    records = _fetch_combined_recent_records(payload.user_id, limit=200)
-    return {
-        "question_id": payload.question_id,
-        "question_type": question["question_type"],
-        "score": score,
-        "is_correct": score >= 60,
-        "reference_answer": question["reference_answer"],
-        "reference_points": question["reference_points"],
-        "scores": _scores_from_records(records),
-        "recent_record_count": len(records),
+
+def _row_to_question(row: Any, include_answer: bool = False) -> dict[str, Any]:
+    item = dict(row)
+    options = {
+        "A": item.pop("option_a", None),
+        "B": item.pop("option_b", None),
+        "C": item.pop("option_c", None),
+        "D": item.pop("option_d", None),
     }
+    item["type_label"] = TYPE_LABELS.get(str(item.get("question_type")), str(item.get("question_type")))
+    item["options"] = {key: value for key, value in options.items() if value}
+    item["key_steps"] = _parse_json_list(item.get("key_steps"))
+    item["common_errors"] = _parse_json_list(item.get("common_errors"))
+    item["mistake_tags"] = _parse_json_list(item.get("mistake_tags"))
+    item["attachments"] = _parse_json_object(item.pop("question_attachments", None))
+    item["attachments"].setdefault("question", [])
+    item["attachments"].setdefault("analysis", [])
+    item["created_at"] = _json_safe(item.get("created_at"))
+    item["updated_at"] = _json_safe(item.get("updated_at"))
+    if not include_answer:
+        for answer_key in ("correct_answer", "standard_answer", "analysis_text"):
+            item.pop(answer_key, None)
+    return item
 
 
-def _ensure_practice_records_shape(db: Any) -> None:
-    has_task_id = db.execute(
-        text(
-            """
-            SELECT COUNT(*)
-            FROM information_schema.columns
-            WHERE table_schema = DATABASE()
-              AND table_name = 'practice_records'
-              AND column_name = 'task_id'
-            """
+def _question_select_sql() -> str:
+    return """
+      q.id,
+      q.source_question_no,
+      q.source_path,
+      q.question_type,
+      q.stage,
+      q.course,
+      q.knowledge_node_id,
+      q.knowledge_tag,
+      q.fine_tag,
+      q.difficulty,
+      q.question_text,
+      q.option_a,
+      q.option_b,
+      q.option_c,
+      q.option_d,
+      q.correct_answer,
+      q.standard_answer,
+      q.analysis_text,
+      q.key_steps,
+      q.common_errors,
+      q.mistake_tags,
+      (
+        SELECT JSON_OBJECT(
+          'question', COALESCE((
+            SELECT JSON_ARRAYAGG(JSON_OBJECT('id',uf1.id,'name',uf1.original_name,'url',CONCAT('/api/files/',uf1.id)))
+            FROM question_attachments qa1 JOIN uploaded_files uf1 ON uf1.id=qa1.uploaded_file_id
+            WHERE qa1.question_id=q.id AND qa1.attachment_type='question'
+          ), JSON_ARRAY()),
+          'analysis', COALESCE((
+            SELECT JSON_ARRAYAGG(JSON_OBJECT('id',uf2.id,'name',uf2.original_name,'url',CONCAT('/api/files/',uf2.id)))
+            FROM question_attachments qa2 JOIN uploaded_files uf2 ON uf2.id=qa2.uploaded_file_id
+            WHERE qa2.question_id=q.id AND qa2.attachment_type='analysis'
+          ), JSON_ARRAY())
         )
-    ).scalar()
-    if not has_task_id:
-        db.execute(
-            text(
-                """
-                ALTER TABLE practice_records
-                ADD COLUMN task_id VARCHAR(64) NOT NULL DEFAULT 'legacy' COMMENT '练习任务ID'
-                AFTER id
-                """
-            )
-        )
-        db.execute(text("ALTER TABLE practice_records ADD KEY idx_practice_records_task (task_id)"))
-        db.execute(text("ALTER TABLE practice_records ADD KEY idx_practice_records_user_task (user_id, task_id)"))
+      ) AS question_attachments,
+      s.source_name,
+      s.source_url,
+      s.license_name
+    """
 
 
-def _submit_answer_sync(payload: AnswerSubmissionRequest) -> dict[str, Any]:
-    supplemental = _supplemental_by_id(payload.question_id)
-    if supplemental:
-        return _submit_subjective_answer_sync(payload, supplemental)
-
-    question = _fetch_question_answer_sync(payload.question_id)
-    if not question:
-        raise HTTPException(status_code=404, detail="题目不存在。")
-    if not payload.selected_answer:
-        raise HTTPException(status_code=422, detail="请选择一个选项。")
-
-    is_correct = payload.selected_answer == question["correct_answer"]
-    query = text(
-        """
-        INSERT INTO practice_records (
-          task_id, user_id, question_id, selected_answer, is_correct,
-          time_spent_seconds, practice_mode
-        )
-        VALUES (
-          :task_id, :user_id, :question_id, :selected_answer, :is_correct,
-          :time_spent_seconds, :practice_mode
-        )
-        """
+def _get_user_exists(db: Any, user_id: int) -> bool:
+    return bool(
+        db.execute(text("SELECT 1 FROM users WHERE id = :user_id LIMIT 1"), {"user_id": user_id}).first()
     )
-    try:
-        with SessionLocal() as db:
-            _ensure_practice_records_shape(db)
-            db.execute(
-                query,
-                {
-                    "task_id": payload.task_id,
-                    "user_id": payload.user_id,
-                    "question_id": payload.question_id,
-                    "selected_answer": payload.selected_answer,
-                    "is_correct": int(is_correct),
-                    "time_spent_seconds": payload.time_spent_seconds,
-                    "practice_mode": payload.practice_mode,
-                },
-            )
-            db.commit()
-    except SQLAlchemyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="做题记录保存失败，请确认 practice_records 表和外键数据。",
-        ) from exc
-
-    records = _fetch_combined_recent_records(payload.user_id, limit=200)
-    return {
-        "question_id": payload.question_id,
-        "selected_answer": payload.selected_answer,
-        "correct_answer": str(question["correct_answer"]),
-        "is_correct": is_correct,
-        "scores": _scores_from_records(records),
-        "recent_record_count": len(records),
-    }
 
 
-def _fetch_subjective_records_sync(user_id: int, limit: int = 200) -> list[dict[str, Any]]:
+def _stages_sync() -> list[dict[str, Any]]:
     query = text(
         """
         SELECT
-          id AS record_id,
-          task_id,
-          question_id,
-          module,
-          knowledge_tag,
-          3 AS difficulty,
-          NULL AS selected_answer,
-          NULL AS correct_answer,
-          CASE WHEN score >= 60 THEN 1 ELSE 0 END AS is_correct,
-          time_spent_seconds,
-          practice_mode,
-          answered_at
-        FROM subjective_practice_records
-        WHERE user_id = :user_id
-        ORDER BY answered_at DESC, id DESC
+          s.id AS stage_id,
+          s.stage_name,
+          s.stage_order,
+          s.title,
+          s.goal_text,
+          c.id AS course_id,
+          c.course_name,
+          c.course_group,
+          c.course_order,
+          c.description
+        FROM math_stages AS s
+        LEFT JOIN math_courses AS c ON c.stage_id = s.id
+        ORDER BY s.stage_order, c.course_order, c.id
+        """
+    )
+    with SessionLocal() as db:
+        rows = db.execute(query).mappings().all()
+
+    stages: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        stage = stages.setdefault(
+            str(row["stage_name"]),
+            {
+                "id": int(row["stage_id"]),
+                "stage_name": str(row["stage_name"]),
+                "stage_order": int(row["stage_order"]),
+                "title": str(row["title"]),
+                "goal_text": str(row["goal_text"]),
+                "courses": [],
+            },
+        )
+        if row["course_id"] is not None:
+            stage["courses"].append(
+                {
+                    "id": int(row["course_id"]),
+                    "course_name": str(row["course_name"]),
+                    "course_group": str(row["course_group"]),
+                    "course_order": int(row["course_order"]),
+                    "description": str(row["description"] or ""),
+                }
+            )
+    return list(stages.values())
+
+
+def _courses_sync(stage: str | None) -> list[dict[str, Any]]:
+    params: dict[str, Any] = {}
+    where_clause = ""
+    if stage:
+        where_clause = "WHERE s.stage_name = :stage"
+        params["stage"] = stage
+
+    query = text(
+        f"""
+        SELECT
+          c.id,
+          s.stage_name,
+          s.stage_order,
+          c.course_name,
+          c.course_group,
+          c.course_order,
+          c.description
+        FROM math_courses AS c
+        JOIN math_stages AS s ON s.id = c.stage_id
+        {where_clause}
+        ORDER BY s.stage_order, c.course_order, c.id
+        """
+    )
+    with SessionLocal() as db:
+        rows = db.execute(query, params).mappings().all()
+    return [
+        {
+            "id": int(row["id"]),
+            "stage": str(row["stage_name"]),
+            "course_name": str(row["course_name"]),
+            "course_group": str(row["course_group"]),
+            "course_order": int(row["course_order"]),
+            "description": str(row["description"] or ""),
+        }
+        for row in rows
+    ]
+
+
+def _knowledge_graph_sync(stage: str | None, course: str | None, user_id: int | None = None) -> dict[str, Any]:
+    params: dict[str, Any] = {}
+    filters = []
+    if stage:
+        filters.append("stage_name = :stage")
+        params["stage"] = stage
+    if course:
+        filters.append("course_name = :course")
+        params["course"] = course
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+
+    query = text(
+        f"""
+        SELECT id, node_code, parent_id, stage_name, course_name, name, level, sort_order, description
+        FROM knowledge_nodes
+        {where_clause}
+        ORDER BY stage_name, course_name, level, sort_order, id
+        """
+    )
+    with SessionLocal() as db:
+        rows = db.execute(query, params).mappings().all()
+        mastery_rows = []
+        if user_id:
+            mastery_rows = db.execute(
+                text(
+                    """
+                    SELECT
+                      q.course,
+                      q.knowledge_tag,
+                      q.fine_tag,
+                      COUNT(*) AS total,
+                      SUM(CASE WHEN pr.is_correct = 1 THEN 1 ELSE 0 END) AS correct
+                    FROM practice_records AS pr
+                    JOIN questions AS q ON q.id = pr.question_id
+                    WHERE pr.user_id = :user_id AND pr.is_correct IS NOT NULL
+                    GROUP BY q.course, q.knowledge_tag, q.fine_tag
+                    """
+                ),
+                {"user_id": user_id},
+            ).mappings().all()
+
+    mastery_by_key: dict[tuple[str, str], int] = {}
+    course_scores: dict[str, list[int]] = {}
+    for item in mastery_rows:
+        total = int(item["total"] or 0)
+        if not total:
+            continue
+        score = round(int(item["correct"] or 0) / total * 100)
+        course_name = str(item["course"])
+        for label in (item["knowledge_tag"], item["fine_tag"]):
+            display_label = _display_knowledge_name(label)
+            mastery_by_key[(course_name, display_label)] = score
+            mastery_by_key[(course_name, str(label))] = score
+        course_scores.setdefault(course_name, []).append(score)
+
+    nodes: list[dict[str, Any]] = []
+    links: list[dict[str, Any]] = []
+    stage_ids: set[str] = set()
+    course_ids: set[str] = set()
+    visible_knowledge_ids: set[int] = set()
+
+    for row in rows:
+        stage_id = f"stage:{row['stage_name']}"
+        course_id = f"course:{row['stage_name']}:{row['course_name']}"
+        if stage_id not in stage_ids:
+            nodes.append(
+                {
+                    "id": stage_id,
+                    "name": str(row["stage_name"]),
+                    "category": "stage",
+                    "stage": str(row["stage_name"]),
+                    "symbolSize": 52,
+                    "mastery": 0,
+                    "mastery_status": "untested",
+                }
+            )
+            stage_ids.add(stage_id)
+        if course_id not in course_ids:
+            course_score = None
+            if row["course_name"] in course_scores:
+                course_score = round(sum(course_scores[str(row["course_name"])]) / len(course_scores[str(row["course_name"])]))
+            nodes.append(
+                {
+                    "id": course_id,
+                    "name": str(row["course_name"]),
+                    "category": "course",
+                    "stage": str(row["stage_name"]),
+                    "course": str(row["course_name"]),
+                    "symbolSize": 46,
+                    "mastery": course_score or 0,
+                    "mastery_status": _mastery_status(course_score),
+                }
+            )
+            links.append({"source": stage_id, "target": course_id, "relation": "包含"})
+            course_ids.add(course_id)
+
+        node_id = f"node:{row['id']}"
+        level = int(row["level"])
+        if _is_unmapped_english_label(row["name"]):
+            continue
+        display_name = _display_knowledge_name(row["name"])
+        mastery_score = mastery_by_key.get((str(row["course_name"]), display_name)) or mastery_by_key.get(
+            (str(row["course_name"]), str(row["name"]))
+        )
+        visible_knowledge_ids.add(int(row["id"]))
+        nodes.append(
+            {
+                "id": node_id,
+                "name": display_name,
+                "category": "knowledge",
+                "stage": str(row["stage_name"]),
+                "course": str(row["course_name"]),
+                "level": level,
+                "symbolSize": max(24, 42 - level * 4),
+                "mastery": mastery_score or 0,
+                "mastery_status": _mastery_status(mastery_score),
+                "description": f"{row['course_name']}：{display_name}",
+            }
+        )
+        parent_id = row["parent_id"]
+        parent_source = f"node:{parent_id}" if parent_id and int(parent_id) in visible_knowledge_ids else course_id
+        links.append(
+            {
+                "source": parent_source,
+                "target": node_id,
+                "relation": "先修关系" if parent_id else "知识点",
+            }
+        )
+
+    return {"nodes": nodes, "links": links, "total": len(nodes)}
+
+
+def _question_type_counts_sync() -> dict[str, Any]:
+    query = text(
+        """
+        SELECT stage, course, question_type, knowledge_tag, COUNT(*) AS total
+        FROM questions
+        WHERE deleted_at IS NULL
+          AND (created_by IS NULL OR (publish_status='published' AND visibility='public'))
+        GROUP BY stage, course, question_type, knowledge_tag
+        ORDER BY stage, course, question_type, total DESC
+        """
+    )
+    with SessionLocal() as db:
+        rows = db.execute(query).mappings().all()
+    counts = [
+        {
+            "stage": str(row["stage"]),
+            "course": str(row["course"]),
+            "question_type": str(row["question_type"]),
+            "type_label": TYPE_LABELS.get(str(row["question_type"]), str(row["question_type"])),
+            "knowledge_tag": str(row["knowledge_tag"]),
+            "total": int(row["total"]),
+        }
+        for row in rows
+    ]
+    return {"types": TYPE_LABELS, "counts": counts}
+
+
+def _build_question_filters(
+    *,
+    stage: str | None,
+    course: str | None,
+    knowledge_tag: str | None,
+    question_type: str | None,
+    exclude_ids: list[int] | None = None,
+) -> tuple[str, dict[str, Any]]:
+    filters: list[str] = ["q.deleted_at IS NULL"]
+    params: dict[str, Any] = {}
+    if stage:
+        filters.append("q.stage = :stage")
+        params["stage"] = stage
+    if course:
+        filters.append("q.course = :course")
+        params["course"] = course
+    if knowledge_tag:
+        filters.append("(q.knowledge_tag = :knowledge_tag OR q.fine_tag = :knowledge_tag)")
+        params["knowledge_tag"] = knowledge_tag
+    if question_type:
+        filters.append("q.question_type = :question_type")
+        params["question_type"] = question_type
+    filters.append("q.question_text NOT LIKE :template_placeholder")
+    params["template_placeholder"] = "%□%"
+    if exclude_ids:
+        placeholders = []
+        for index, question_id in enumerate(exclude_ids):
+            key = f"exclude_{index}"
+            placeholders.append(f":{key}")
+            params[key] = question_id
+        filters.append(f"q.id NOT IN ({', '.join(placeholders)})")
+    return ("WHERE " + " AND ".join(filters)) if filters else "", params
+
+
+def _random_questions_sync(
+    *,
+    stage: str | None,
+    course: str | None,
+    knowledge_tag: str | None,
+    question_type: str | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    attempts = [
+        {"stage": stage, "course": course, "knowledge_tag": knowledge_tag, "question_type": question_type},
+        {"stage": stage, "course": course, "knowledge_tag": None, "question_type": question_type},
+        {"stage": stage, "course": course, "knowledge_tag": None, "question_type": None},
+        {"stage": stage, "course": None, "knowledge_tag": None, "question_type": question_type},
+        {"stage": None, "course": None, "knowledge_tag": None, "question_type": question_type},
+        {"stage": None, "course": None, "knowledge_tag": None, "question_type": None},
+    ]
+    seen: set[tuple[Any, ...]] = set()
+    with SessionLocal() as db:
+        for attempt in attempts:
+            key = tuple(attempt.items())
+            if key in seen:
+                continue
+            seen.add(key)
+            where_clause, params = _build_question_filters(**attempt)
+            params["limit"] = limit
+            source_filter = """(
+              q.source_question_no LIKE 'CURATED-%'
+              OR q.source_question_no LIKE 'BACHELOR-CN-%'
+              OR (q.created_by IS NOT NULL AND q.publish_status='published' AND q.visibility='public')
+            )"""
+            if where_clause:
+                where_clause = f"{where_clause} AND {source_filter}"
+            else:
+                where_clause = f"WHERE {source_filter}"
+            query = text(
+                f"""
+                SELECT {_question_select_sql()}
+                FROM questions AS q
+                JOIN source_attributions AS s ON s.id = q.source_id
+                {where_clause}
+                ORDER BY RAND()
+                LIMIT :limit
+                """
+            )
+            rows = db.execute(query, params).mappings().all()
+            if rows:
+                return [_row_to_question(row) for row in rows]
+    return []
+
+
+def _get_question_sync(question_id: int, *, allow_private: bool = False) -> dict[str, Any] | None:
+    query = text(
+        f"""
+        SELECT {_question_select_sql()}
+        FROM questions AS q
+        JOIN source_attributions AS s ON s.id = q.source_id
+        WHERE q.id = :question_id
+          AND q.deleted_at IS NULL
+          AND (
+            q.created_by IS NULL
+            OR :allow_private=1
+            OR (q.publish_status='published' AND q.visibility='public')
+          )
+        LIMIT 1
+        """
+    )
+    with SessionLocal() as db:
+        row = db.execute(
+            query,
+            {"question_id": question_id, "allow_private": 1 if allow_private else 0},
+        ).mappings().first()
+    return _row_to_question(row, include_answer=True) if row else None
+
+
+def _assessment_question_rows(db: Any, assessment_id: int) -> list[dict[str, Any]]:
+    rows = db.execute(
+        text(
+            f"""
+            SELECT {_question_select_sql()}, aq.sort_order, aq.practice_record_id,
+                   pr.selected_answer AS attempt_selected_answer,
+                   pr.answer_text AS attempt_answer_text,
+                   pr.is_correct AS attempt_is_correct,
+                   pr.score AS attempt_score,
+                   pr.review_status AS attempt_review_status
+            FROM assessment_session_questions AS aq
+            JOIN questions AS q ON q.id = aq.question_id
+            JOIN source_attributions AS s ON s.id = q.source_id
+            LEFT JOIN practice_records AS pr ON pr.id = aq.practice_record_id
+            WHERE aq.assessment_id = :assessment_id
+            ORDER BY aq.sort_order
+            """
+        ),
+        {"assessment_id": assessment_id},
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def _assessment_payload(db: Any, session: Any) -> dict[str, Any]:
+    session_data = dict(session)
+    rows = _assessment_question_rows(db, int(session_data["id"]))
+    answered = sum(1 for row in rows if row.get("practice_record_id") is not None)
+    questions = []
+    for row in rows:
+        sort_order = int(row.pop("sort_order"))
+        practice_record_id = row.pop("practice_record_id", None)
+        attempt = None
+        if practice_record_id is not None:
+            attempt_score = row.pop("attempt_score", None)
+            attempt = {
+                "selected_answer": row.pop("attempt_selected_answer", None),
+                "answer_text": row.pop("attempt_answer_text", None),
+                "is_correct": row.pop("attempt_is_correct", None),
+                "score": float(attempt_score) if attempt_score is not None else None,
+                "review_status": row.pop("attempt_review_status", None),
+                "correct_answer": row.get("correct_answer"),
+                "standard_answer": row.get("standard_answer"),
+                "analysis_text": row.get("analysis_text"),
+                "key_steps": _parse_json_list(row.get("key_steps")),
+                "common_errors": _parse_json_list(row.get("common_errors")),
+            }
+        else:
+            for key in (
+                "attempt_selected_answer",
+                "attempt_answer_text",
+                "attempt_is_correct",
+                "attempt_score",
+                "attempt_review_status",
+            ):
+                row.pop(key, None)
+        question = _row_to_question(row)
+        question["sort_order"] = sort_order
+        question["answered"] = practice_record_id is not None
+        question["attempt"] = attempt
+        questions.append(question)
+    return {
+        "task_id": str(session_data["task_id"]),
+        "mode": "assessment",
+        "title": "数学基础首测",
+        "stage": str(session_data["stage"]),
+        "status": str(session_data["status"]),
+        "question_count": int(session_data["question_count"]),
+        "answered_count": answered,
+        "started_at": _json_safe(session_data.get("started_at")),
+        "completed_at": _json_safe(session_data.get("completed_at")),
+        "questions": questions,
+        "report": {
+            **_parse_json_object(session_data.get("summary_json")),
+            "plan": _parse_json_object(session_data.get("plan_json")),
+        }
+        if session_data.get("summary_json")
+        else None,
+    }
+
+
+def _pick_balanced_assessment_questions(db: Any, stage: str, limit: int) -> list[int]:
+    type_cycle = ["choice", "blank", "calculation", "proof", "comprehensive"]
+    type_weights: list[str] = []
+    while len(type_weights) < limit:
+        type_weights.extend(type_cycle)
+    if limit >= 10:
+        # A second choice/calculation pass keeps larger tests practical without dropping proof coverage.
+        type_weights = [
+            "choice", "blank", "calculation", "proof", "comprehensive",
+            "choice", "calculation", "blank", "proof", "comprehensive",
+        ] + type_weights
+    selected: list[int] = []
+
+    for question_type in type_weights[:limit]:
+        row = db.execute(
+            text(
+                """
+                SELECT q.id
+                FROM questions AS q
+                WHERE q.stage = :stage
+                  AND q.question_type = :question_type
+                  AND (q.source_question_no LIKE 'CURATED-%' OR q.source_question_no LIKE 'BACHELOR-CN-%')
+                  AND q.question_text NOT LIKE :placeholder
+                  AND q.id NOT IN (
+                    SELECT aq.question_id
+                    FROM assessment_session_questions AS aq
+                    JOIN assessment_sessions AS a ON a.id = aq.assessment_id
+                    WHERE a.stage = :stage
+                  )
+                ORDER BY RAND()
+                LIMIT 1
+                """
+            ),
+            {"stage": stage, "question_type": question_type, "placeholder": "%□%"},
+        ).first()
+        if not row:
+            row = db.execute(
+                text(
+                    """
+                    SELECT q.id
+                    FROM questions AS q
+                    WHERE q.stage = :stage
+                      AND q.question_type = :question_type
+                      AND (q.source_question_no LIKE 'CURATED-%' OR q.source_question_no LIKE 'BACHELOR-CN-%')
+                      AND q.question_text NOT LIKE :placeholder
+                    ORDER BY RAND()
+                    LIMIT 1
+                    """
+                ),
+                {"stage": stage, "question_type": question_type, "placeholder": "%□%"},
+            ).first()
+        if row and int(row[0]) not in selected:
+            selected.append(int(row[0]))
+
+    if len(selected) < limit:
+        params: dict[str, Any] = {"stage": stage, "limit": limit - len(selected), "placeholder": "%□%"}
+        exclusion = ""
+        if selected:
+            keys = []
+            for index, question_id in enumerate(selected):
+                key = f"selected_{index}"
+                params[key] = question_id
+                keys.append(f":{key}")
+            exclusion = f"AND q.id NOT IN ({', '.join(keys)})"
+        rows = db.execute(
+            text(
+                f"""
+                SELECT q.id
+                FROM questions AS q
+                WHERE q.stage = :stage
+                  AND (q.source_question_no LIKE 'CURATED-%' OR q.source_question_no LIKE 'BACHELOR-CN-%')
+                  AND q.question_text NOT LIKE :placeholder
+                  {exclusion}
+                ORDER BY RAND()
+                LIMIT :limit
+                """
+            ),
+            params,
+        ).all()
+        selected.extend(int(row[0]) for row in rows)
+    return selected[:limit]
+
+
+def _start_assessment_sync(payload: AssessmentStartRequest) -> dict[str, Any]:
+    with SessionLocal() as db:
+        if not _get_user_exists(db, payload.user_id):
+            raise HTTPException(status_code=404, detail="请先注册或登录后再开始首测。")
+        if payload.restart:
+            db.execute(
+                text("UPDATE assessment_sessions SET status = 'abandoned' WHERE user_id = :user_id AND status = 'in_progress'"),
+                {"user_id": payload.user_id},
+            )
+        else:
+            existing = db.execute(
+                text(
+                    """
+                    SELECT * FROM assessment_sessions
+                    WHERE user_id = :user_id AND status = 'in_progress'
+                    ORDER BY started_at DESC LIMIT 1
+                    """
+                ),
+                {"user_id": payload.user_id},
+            ).mappings().first()
+            if existing:
+                return _assessment_payload(db, existing)
+
+        stage = payload.stage or db.execute(
+            text("SELECT current_stage FROM users WHERE id = :user_id"), {"user_id": payload.user_id}
+        ).scalar() or "大一"
+        question_ids = _pick_balanced_assessment_questions(db, str(stage), payload.limit)
+        if len(question_ids) < payload.limit:
+            raise HTTPException(status_code=409, detail=f"{stage}中文首测题暂时不足，请先补充题库。")
+
+        task_id = str(uuid.uuid4())
+        result = db.execute(
+            text(
+                """
+                INSERT INTO assessment_sessions (task_id, user_id, stage, question_count)
+                VALUES (:task_id, :user_id, :stage, :question_count)
+                """
+            ),
+            {"task_id": task_id, "user_id": payload.user_id, "stage": stage, "question_count": len(question_ids)},
+        )
+        assessment_id = int(result.lastrowid)
+        for sort_order, question_id in enumerate(question_ids, start=1):
+            db.execute(
+                text(
+                    """
+                    INSERT INTO assessment_session_questions (assessment_id, question_id, sort_order)
+                    VALUES (:assessment_id, :question_id, :sort_order)
+                    """
+                ),
+                {"assessment_id": assessment_id, "question_id": question_id, "sort_order": sort_order},
+            )
+        db.commit()
+        session = db.execute(
+            text("SELECT * FROM assessment_sessions WHERE id = :assessment_id"), {"assessment_id": assessment_id}
+        ).mappings().one()
+        return _assessment_payload(db, session)
+
+
+def _tokenize_answer(text_value: str) -> set[str]:
+    return {
+        token.lower()
+        for token in re.split(r"[\s,.;:，。；：、()（）\\[\\]{}<>《》\"'“”]+", text_value)
+        if len(token.strip()) >= 2
+    }
+
+
+def _normalize_math_answer(text_value: str) -> str:
+    normalized = str(text_value or "").strip().lower()
+    normalized = re.sub(r"^(?:答案|答)\s*[:：]\s*", "", normalized)
+    replacements = {
+        "，": ",",
+        "；": ";",
+        "（": "(",
+        "）": ")",
+        "−": "-",
+        "－": "-",
+        "×": "*",
+        "π": "pi",
+        "√": "sqrt",
+        "\\left": "",
+        "\\right": "",
+    }
+    for source, target in replacements.items():
+        normalized = normalized.replace(source, target)
+    return re.sub(r"[\s。.;；]+", "", normalized)
+
+
+def _score_subjective(
+    answer_text: str,
+    question: dict[str, Any],
+    question_type: str,
+) -> tuple[bool, float]:
+    answer_text = answer_text.strip()
+    if not answer_text:
+        return False, 0.0
+
+    normalized_answer = _normalize_math_answer(answer_text)
+    normalized_standard = _normalize_math_answer(question.get("standard_answer") or "")
+    if normalized_answer and normalized_standard and normalized_answer == normalized_standard:
+        return True, 100.0
+
+    if question_type == "blank":
+        return False, 0.0
+
+    key_text = " ".join(
+        [
+            question.get("standard_answer") or "",
+            " ".join(question.get("key_steps") or []),
+            question.get("knowledge_tag") or "",
+            question.get("fine_tag") or "",
+        ]
+    )
+    expected = _tokenize_answer(key_text)
+    actual = _tokenize_answer(answer_text)
+    if not expected:
+        score = 70.0 if len(answer_text) >= 20 else 0.0
+        return score >= 60, score
+
+    overlap = len(expected & actual)
+    ratio = overlap / max(len(expected), 1)
+    length_bonus = min(len(answer_text) / 180, 0.25)
+    score = max(30.0, min(100.0, (ratio * 90) + (length_bonus * 100)))
+    return score >= 60, round(score, 2)
+
+
+def _validate_attachment_ids(db: Any, user_id: int, attachment_ids: list[int]) -> list[int]:
+    unique_ids = list(dict.fromkeys(int(item) for item in attachment_ids))
+    if len(unique_ids) != len(attachment_ids) or len(unique_ids) > 5:
+        raise HTTPException(status_code=422, detail="作答图片无效，每题最多绑定 5 张不同图片。")
+    if not unique_ids:
+        return []
+
+    placeholders = ", ".join(f":attachment_{index}" for index in range(len(unique_ids)))
+    params = {f"attachment_{index}": file_id for index, file_id in enumerate(unique_ids)}
+    params["user_id"] = user_id
+    rows = db.execute(
+        text(
+            f"""
+            SELECT uf.id
+            FROM uploaded_files AS uf
+            LEFT JOIN answer_attachments AS aa ON aa.uploaded_file_id = uf.id
+            WHERE uf.user_id = :user_id
+              AND uf.id IN ({placeholders})
+              AND aa.id IS NULL
+            """
+        ),
+        params,
+    ).all()
+    valid_ids = {int(row[0]) for row in rows}
+    if valid_ids != set(unique_ids):
+        raise HTTPException(status_code=409, detail="部分图片不存在、并非当前用户上传，或已经提交过。")
+    return unique_ids
+
+
+def _validate_assessment_question(db: Any, payload: AnswerSubmissionRequest) -> int | None:
+    if payload.practice_mode != "assessment":
+        return None
+    row = db.execute(
+        text(
+            """
+            SELECT aq.id
+            FROM assessment_sessions AS a
+            JOIN assessment_session_questions AS aq ON aq.assessment_id = a.id
+            WHERE a.task_id = :task_id
+              AND a.user_id = :user_id
+              AND a.status = 'in_progress'
+              AND aq.question_id = :question_id
+              AND aq.practice_record_id IS NULL
+            LIMIT 1
+            """
+        ),
+        {"task_id": payload.task_id, "user_id": payload.user_id, "question_id": payload.question_id},
+    ).first()
+    if not row:
+        raise HTTPException(status_code=409, detail="该首测题目已提交，或首测任务已经结束。")
+    return int(row[0])
+
+
+def _submit_answer_sync(payload: AnswerSubmissionRequest) -> dict[str, Any]:
+    question = _get_question_sync(payload.question_id)
+    if not question:
+        raise HTTPException(status_code=404, detail="题目不存在。")
+
+    question_type = str(question["question_type"])
+    selected = (payload.selected_answer or "").strip().upper()
+    answer_text = (payload.answer_text or "").strip()
+    if question_type == "choice" and not selected:
+        raise HTTPException(status_code=422, detail="请选择一个答案后再提交。")
+    if question_type != "choice" and not answer_text and not payload.attachment_ids:
+        raise HTTPException(status_code=422, detail="请填写答案，或上传作答图片后再提交。")
+
+    has_images = bool(payload.attachment_ids)
+    pending_review = has_images and question_type != "choice"
+    if pending_review:
+        is_correct = None
+        score = None
+    elif question_type == "choice":
+        correct_answer = str(question.get("correct_answer") or "").strip().upper()
+        is_correct = bool(selected and selected == correct_answer)
+        score = 100.0 if is_correct else 0.0
+    else:
+        is_correct, score = _score_subjective(answer_text, question, question_type)
+
+    mistake_tags = [] if is_correct is not False else (question.get("mistake_tags") or question.get("common_errors") or ["概念未掌握"])
+
+    insert_query = text(
+        """
+        INSERT INTO practice_records (
+          task_id, user_id, question_id, selected_answer, answer_text, is_correct,
+          score, mistake_tags, time_spent_seconds, practice_mode, review_status
+        )
+        VALUES (
+          :task_id, :user_id, :question_id, :selected_answer, :answer_text, :is_correct,
+          :score, :mistake_tags, :time_spent_seconds, :practice_mode, :review_status
+        )
+        """
+    )
+    try:
+        with SessionLocal() as db:
+            if not _get_user_exists(db, payload.user_id):
+                raise HTTPException(status_code=404, detail="请先注册或登录后再提交做题记录。")
+            attachment_ids = _validate_attachment_ids(db, payload.user_id, payload.attachment_ids)
+            assessment_question_id = _validate_assessment_question(db, payload)
+            insert_result = db.execute(
+                insert_query,
+                {
+                    "task_id": payload.task_id,
+                    "user_id": payload.user_id,
+                    "question_id": payload.question_id,
+                    "selected_answer": selected or None,
+                    "answer_text": answer_text or None,
+                    "is_correct": None if is_correct is None else (1 if is_correct else 0),
+                    "score": score,
+                    "mistake_tags": json.dumps(mistake_tags, ensure_ascii=False),
+                    "time_spent_seconds": payload.time_spent_seconds,
+                    "practice_mode": payload.practice_mode,
+                    "review_status": "pending" if pending_review else "auto_graded",
+                },
+            )
+            record_id = int(insert_result.lastrowid)
+            for sort_order, file_id in enumerate(attachment_ids, start=1):
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO answer_attachments (practice_record_id, uploaded_file_id, sort_order)
+                        VALUES (:record_id, :file_id, :sort_order)
+                        """
+                    ),
+                    {"record_id": record_id, "file_id": file_id, "sort_order": sort_order},
+                )
+            if assessment_question_id is not None:
+                db.execute(
+                    text(
+                        """
+                        UPDATE assessment_session_questions
+                        SET practice_record_id = :record_id, answered_at = CURRENT_TIMESTAMP
+                        WHERE id = :assessment_question_id
+                        """
+                    ),
+                    {"record_id": record_id, "assessment_question_id": assessment_question_id},
+                )
+            db.commit()
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="做题记录保存失败，请检查数据库连接。") from exc
+
+    next_items = _random_questions_sync(
+        stage=question.get("stage"),
+        course=question.get("course"),
+        knowledge_tag=question.get("knowledge_tag"),
+        question_type=None,
+        limit=3,
+    )
+    response = {
+        "task_id": payload.task_id,
+        "question_id": payload.question_id,
+        "is_correct": is_correct,
+        "score": score,
+        "review_status": "pending" if pending_review else "auto_graded",
+        "pending_review": pending_review,
+        "attachment_count": len(payload.attachment_ids),
+        "correct_answer": question.get("correct_answer"),
+        "standard_answer": question.get("standard_answer"),
+        "analysis_text": question.get("analysis_text"),
+        "key_steps": question.get("key_steps"),
+        "common_errors": question.get("common_errors"),
+        "mistake_tags": mistake_tags,
+        "next_recommendation": {
+            "title": f"{question.get('fine_tag') or question.get('knowledge_tag')} 巩固练习",
+            "stage": question.get("stage"),
+            "course": question.get("course"),
+            "knowledge_tag": question.get("knowledge_tag"),
+            "questions": next_items,
+        },
+    }
+    if payload.practice_mode == "assessment":
+        assessment_state = _assessment_after_submit_sync(payload.user_id, payload.task_id)
+        response.update(assessment_state)
+    return response
+
+
+def _build_assessment_report_sync(user_id: int, task_id: str) -> dict[str, Any]:
+    with SessionLocal() as db:
+        session = db.execute(
+            text(
+                """
+                SELECT id, stage, question_count
+                FROM assessment_sessions
+                WHERE task_id = :task_id AND user_id = :user_id
+                LIMIT 1
+                """
+            ),
+            {"task_id": task_id, "user_id": user_id},
+        ).mappings().first()
+        if not session:
+            raise HTTPException(status_code=404, detail="首测任务不存在。")
+        rows = db.execute(
+            text(
+                """
+                SELECT
+                  q.course, q.knowledge_tag, q.fine_tag, q.question_type,
+                  pr.is_correct, pr.score, pr.review_status, pr.time_spent_seconds
+                FROM assessment_session_questions AS aq
+                JOIN questions AS q ON q.id = aq.question_id
+                LEFT JOIN practice_records AS pr ON pr.id = aq.practice_record_id
+                WHERE aq.assessment_id = :assessment_id
+                ORDER BY aq.sort_order
+                """
+            ),
+            {"assessment_id": int(session["id"])},
+        ).mappings().all()
+
+    graded = [row for row in rows if row["is_correct"] is not None]
+    correct_count = sum(1 for row in graded if bool(row["is_correct"]))
+    pending_count = sum(1 for row in rows if str(row.get("review_status") or "") == "pending")
+    accuracy = round(correct_count / len(graded) * 100) if graded else 0
+    total_seconds = sum(int(row.get("time_spent_seconds") or 0) for row in rows)
+
+    knowledge: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for row in graded:
+        key = (str(row["course"]), str(row["knowledge_tag"]), str(row["fine_tag"]))
+        item = knowledge.setdefault(
+            key,
+            {
+                "course": key[0],
+                "knowledge_tag": key[1],
+                "fine_tag": key[2],
+                "total": 0,
+                "correct": 0,
+                "time_spent_seconds": 0,
+            },
+        )
+        item["total"] += 1
+        item["correct"] += int(bool(row["is_correct"]))
+        item["time_spent_seconds"] += int(row.get("time_spent_seconds") or 0)
+
+    scored_points = []
+    for item in knowledge.values():
+        point_score = round(item["correct"] / max(item["total"], 1) * 100)
+        scored_points.append(
+            {
+                **item,
+                "score": point_score,
+                "avg_time_seconds": round(item["time_spent_seconds"] / max(item["total"], 1)),
+            }
+        )
+    weak_points = sorted(scored_points, key=lambda item: (item["score"], -item["total"]))[:3]
+    strengths = sorted(scored_points, key=lambda item: (-item["score"], -item["total"]))[:2]
+    focus = weak_points[0] if weak_points else {
+        "course": "高等数学上",
+        "knowledge_tag": "基础概念",
+        "fine_tag": "基础概念",
+        "score": accuracy,
+    }
+
+    second_focus = weak_points[1] if len(weak_points) > 1 else focus
+    weekly_plan = [
+        {"day": "第 1 天", "task": f"回顾「{focus['fine_tag']}」定义与例题", "minutes": 45},
+        {"day": "第 2 天", "task": f"完成「{focus['fine_tag']}」基础题 8 题", "minutes": 50},
+        {"day": "第 3 天", "task": f"整理「{focus['knowledge_tag']}」错因笔记", "minutes": 35},
+        {"day": "第 4 天", "task": f"学习「{second_focus['fine_tag']}」关键方法", "minutes": 45},
+        {"day": "第 5 天", "task": "完成一组计算与证明混合练习", "minutes": 60},
+        {"day": "第 6 天", "task": "回炉本次首测错题", "minutes": 40},
+        {"day": "第 7 天", "task": "完成 10 题阶段复测并复盘", "minutes": 50},
+    ]
+
+    pending_note = f"，另有 {pending_count} 道图片作答待教师复核" if pending_count else ""
+    summary = (
+        f"本次首测完成 {len(rows)} 题，已自动评分 {len(graded)} 题，正确 {correct_count} 题，"
+        f"自动评分正确率 {accuracy}%{pending_note}。"
+    )
+    xiaoluo_message = (
+        f"首测完成，我已经看过你的作答。{summary}\n\n"
+        f"当前优先补强：{focus['course']} · {focus['fine_tag']}（掌握度约 {focus['score']}%）。\n"
+        f"接下来 7 天先走“概念回顾 → 基础题 → 错因整理 → 混合复测”这条路线。"
+        + (" 图片题我先标成待复核，教师评分后再更新你的诊断。" if pending_count else "")
+    )
+    return {
+        "task_id": task_id,
+        "title": "基础首测分析",
+        "stage": str(session["stage"]),
+        "question_count": int(session["question_count"]),
+        "graded_count": len(graded),
+        "correct_count": correct_count,
+        "pending_review_count": pending_count,
+        "accuracy": accuracy,
+        "duration_seconds": total_seconds,
+        "summary": summary,
+        "weak_points": weak_points,
+        "strengths": strengths,
+        "plan": {
+            "headline": f"先补强 {focus['fine_tag']}，再进行阶段复测",
+            "focus_course": focus["course"],
+            "focus_knowledge": focus["knowledge_tag"],
+            "weekly_plan": weekly_plan,
+            "next_action": {
+                "label": f"练习 {focus['fine_tag']}",
+                "path": "/practice",
+                "query": {
+                    "mode": "daily",
+                    "course": focus["course"],
+                    "knowledge_tag": focus["knowledge_tag"],
+                    "limit": 8,
+                },
+            },
+        },
+        "xiaoluo_message": xiaoluo_message,
+    }
+
+
+def _assessment_after_submit_sync(user_id: int, task_id: str) -> dict[str, Any]:
+    with SessionLocal() as db:
+        state = db.execute(
+            text(
+                """
+                SELECT
+                  a.id, a.status, a.question_count, a.summary_json, a.plan_json,
+                  SUM(CASE WHEN aq.practice_record_id IS NOT NULL THEN 1 ELSE 0 END) AS answered_count
+                FROM assessment_sessions AS a
+                JOIN assessment_session_questions AS aq ON aq.assessment_id = a.id
+                WHERE a.task_id = :task_id AND a.user_id = :user_id
+                GROUP BY a.id, a.status, a.question_count, a.summary_json, a.plan_json
+                LIMIT 1
+                """
+            ),
+            {"task_id": task_id, "user_id": user_id},
+        ).mappings().first()
+    if not state:
+        raise HTTPException(status_code=404, detail="首测任务不存在。")
+
+    answered_count = int(state["answered_count"] or 0)
+    question_count = int(state["question_count"])
+    if answered_count < question_count:
+        return {
+            "assessment_complete": False,
+            "assessment_progress": {"answered": answered_count, "total": question_count},
+        }
+
+    if str(state["status"]) == "completed" and state.get("summary_json"):
+        report = _parse_json_object(state["summary_json"])
+        report["plan"] = _parse_json_object(state["plan_json"])
+        return {
+            "assessment_complete": True,
+            "assessment_progress": {"answered": answered_count, "total": question_count},
+            "assessment_report": report,
+        }
+
+    report = _build_assessment_report_sync(user_id, task_id)
+    session_id = str(uuid.uuid4())
+    with SessionLocal() as db:
+        db.execute(
+            text(
+                """
+                UPDATE assessment_sessions
+                SET status = 'completed', summary_json = :summary_json, plan_json = :plan_json,
+                    completed_at = CURRENT_TIMESTAMP
+                WHERE task_id = :task_id AND user_id = :user_id
+                """
+            ),
+            {
+                "summary_json": json.dumps({key: value for key, value in report.items() if key != "plan"}, ensure_ascii=False),
+                "plan_json": json.dumps(report["plan"], ensure_ascii=False),
+                "task_id": task_id,
+                "user_id": user_id,
+            },
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO learning_plans (user_id, stage, course, plan_name, plan_json)
+                VALUES (:user_id, :stage, :course, :plan_name, :plan_json)
+                """
+            ),
+            {
+                "user_id": user_id,
+                "stage": report["stage"],
+                "course": report["plan"]["focus_course"],
+                "plan_name": "首测后 7 天学习计划",
+                "plan_json": json.dumps(report["plan"], ensure_ascii=False),
+            },
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO chat_messages (session_id, user_id, role, content)
+                VALUES (:session_id, :user_id, 'assistant', :content)
+                """
+            ),
+            {"session_id": session_id, "user_id": user_id, "content": report["xiaoluo_message"]},
+        )
+        db.commit()
+    report["chat_session_id"] = session_id
+    return {
+        "assessment_complete": True,
+        "assessment_progress": {"answered": answered_count, "total": question_count},
+        "assessment_report": report,
+    }
+
+
+def _recent_records_sync(user_id: int, limit: int = 50) -> list[dict[str, Any]]:
+    query = text(
+        """
+        SELECT
+          pr.id,
+          pr.task_id,
+          pr.question_id,
+          pr.selected_answer,
+          pr.answer_text,
+          pr.is_correct,
+          pr.score,
+          pr.mistake_tags AS record_mistake_tags,
+          pr.time_spent_seconds,
+          pr.practice_mode,
+          pr.answered_at,
+          q.stage,
+          q.course,
+          q.knowledge_tag,
+          q.fine_tag,
+          q.question_type,
+          q.difficulty
+        FROM practice_records AS pr
+        JOIN questions AS q ON q.id = pr.question_id
+        WHERE pr.user_id = :user_id
+        ORDER BY pr.answered_at DESC, pr.id DESC
         LIMIT :limit
         """
     )
     try:
         with SessionLocal() as db:
-            _ensure_subjective_records_table(db)
             rows = db.execute(query, {"user_id": user_id, "limit": limit}).mappings().all()
     except SQLAlchemyError:
         return []
-    return [dict(row) for row in rows]
+
+    records = []
+    for row in rows:
+        item = dict(row)
+        item["answered_at"] = _json_safe(item.get("answered_at"))
+        item["mistake_tags"] = _parse_json_list(item.pop("record_mistake_tags", None))
+        records.append(item)
+    return records
 
 
-def _fetch_combined_recent_records(user_id: int, limit: int = 200) -> list[dict[str, Any]]:
-    records = _fetch_recent_records(user_id, limit)
-    records.extend(_fetch_subjective_records_sync(user_id, limit))
-    return sorted(
-        records,
-        key=lambda item: str(item.get("answered_at") or ""),
-        reverse=True,
-    )[:limit]
+def _diagnose_sync(user_id: int) -> dict[str, Any]:
+    all_records = _recent_records_sync(user_id, 200)
+    records = [record for record in all_records if record.get("is_correct") is not None]
+    if not all_records:
+        return {
+            "user_id": user_id,
+            "recent_record_count": 0,
+            "summary": "暂无做题记录。建议先完成一次首测，系统会根据课程和知识点正确率生成个性化规划。",
+            "course_scores": [],
+            "weak_points": [],
+            "radar": [],
+        }
+    if not records:
+        return {
+            "user_id": user_id,
+            "recent_record_count": len(all_records),
+            "graded_record_count": 0,
+            "pending_review_count": len(all_records),
+            "summary": "作答图片已提交，正在等待教师复核。复核完成后系统会生成薄弱点和学习计划。",
+            "course_scores": [],
+            "weak_points": [],
+            "radar": [],
+        }
 
+    stats: dict[str, dict[str, Any]] = {}
+    knowledge_stats: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for record in records:
+        course = str(record["course"])
+        stats.setdefault(course, {"course": course, "stage": record["stage"], "total": 0, "correct": 0})
+        stats[course]["total"] += 1
+        stats[course]["correct"] += int(bool(record["is_correct"]))
 
-def _ensure_user_goal_table(db: Any) -> None:
-    db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS user_goal_settings (
-              id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '目标设置ID',
-              user_id BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
-              target_score DECIMAL(5,1) NOT NULL DEFAULT 78.0 COMMENT '目标分数',
-              exam_date DATE NOT NULL COMMENT '目标考试日期',
-              target_exam VARCHAR(128) NOT NULL DEFAULT '国考' COMMENT '目标考试',
-              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-              updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-              PRIMARY KEY (id),
-              UNIQUE KEY uk_user_goal_settings_user (user_id),
-              CONSTRAINT fk_user_goal_settings_user
-                FOREIGN KEY (user_id) REFERENCES users (id)
-                ON DELETE CASCADE
-                ON UPDATE CASCADE
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用户目标设置表'
-            """
+        key = (str(record["stage"]), course, str(record["knowledge_tag"]))
+        knowledge_stats.setdefault(
+            key,
+            {
+                "stage": str(record["stage"]),
+                "course": course,
+                "knowledge_tag": str(record["knowledge_tag"]),
+                "fine_tag": str(record["fine_tag"]),
+                "total": 0,
+                "correct": 0,
+                "time_spent_seconds": 0,
+            },
         )
-    )
+        knowledge_stats[key]["total"] += 1
+        knowledge_stats[key]["correct"] += int(bool(record["is_correct"]))
+        knowledge_stats[key]["time_spent_seconds"] += int(record.get("time_spent_seconds") or 0)
 
+    course_scores = []
+    for item in stats.values():
+        score = round(item["correct"] / item["total"] * 100)
+        course_scores.append({**item, "score": score, "accuracy": score, "weak": score < 65})
+    course_scores.sort(key=lambda item: (item["score"], -item["total"]))
 
-def _default_exam_date() -> date:
-    today = date.today()
-    target = date(today.year, 12, 1)
-    if target <= today:
-        target = date(today.year + 1, 12, 1)
-    return target
+    weak_points = []
+    for item in knowledge_stats.values():
+        score = round(item["correct"] / item["total"] * 100)
+        weak_points.append(
+            {
+                "stage": item["stage"],
+                "course": item["course"],
+                "knowledge_tag": item["knowledge_tag"],
+                "fine_tag": item["fine_tag"],
+                "score": score,
+                "total": item["total"],
+                "avg_time_seconds": round(item["time_spent_seconds"] / max(item["total"], 1)),
+                "reason": "正确率偏低" if score < 60 else "耗时较长或需要继续巩固",
+            }
+        )
+    weak_points.sort(key=lambda item: (item["score"], -item["total"]))
+    weakest = weak_points[:3]
 
+    radar_groups = {
+        "高等数学": ["高等数学上", "高等数学下", "数学分析选讲"],
+        "线性代数": ["线性代数上", "线性代数下", "高等代数"],
+        "概率统计": ["概率论与数理统计"],
+        "方程与分析": ["级数与常微分方程", "实变函数", "复变函数"],
+        "综合建模": ["数学建模与综合专题", "证明方法入门"],
+    }
+    radar = []
+    for label, courses in radar_groups.items():
+        matched = [item for item in course_scores if item["course"] in courses]
+        if matched:
+            score = round(sum(item["score"] for item in matched) / len(matched))
+            radar.append({"name": label, "score": score})
 
-def _goal_payload(row: Any | None, user_id: int) -> dict[str, Any]:
-    if not row:
-        exam_date = _default_exam_date()
-        target_score = 78.0
-        target_exam = "国考"
-    else:
-        target_score = float(row["target_score"])
-        exam_date = row["exam_date"]
-        target_exam = str(row["target_exam"])
-
-    remaining_days = max((exam_date - date.today()).days, 0)
     return {
         "user_id": user_id,
-        "target_score": target_score,
-        "exam_date": exam_date.isoformat(),
-        "target_exam": target_exam,
-        "remaining_days": remaining_days,
+        "recent_record_count": len(records),
+        "graded_record_count": len(records),
+        "pending_review_count": len(all_records) - len(records),
+        "summary": (
+            f"已分析最近 {len(records)} 条记录，当前最需要补强：{weakest[0]['course']} - {weakest[0]['knowledge_tag']}。"
+            if weakest
+            else f"已分析最近 {len(records)} 条记录，暂未发现明显薄弱点。"
+        ),
+        "course_scores": course_scores,
+        "weak_points": weakest,
+        "radar": radar,
     }
 
 
-def _get_user_goal_sync(user_id: int) -> dict[str, Any]:
+def _recommend_sync(user_id: int, limit: int, stage: str | None, course: str | None) -> list[dict[str, Any]]:
+    diagnosis = _diagnose_sync(user_id)
+    if int(diagnosis.get("recent_record_count") or 0) == 0:
+        return []
+    weak_points = diagnosis.get("weak_points") or []
+    tasks = []
+    for weak in weak_points[:5]:
+        task_stage = stage or weak.get("stage")
+        task_course = course or weak.get("course")
+        tag = weak.get("knowledge_tag")
+        questions = _random_questions_sync(
+            stage=task_stage,
+            course=task_course,
+            knowledge_tag=tag,
+            question_type=None,
+            limit=min(10, max(3, math.ceil(limit / 2))),
+        )
+        if not questions:
+            continue
+        tasks.append(
+            {
+                "title": f"{weak.get('fine_tag') or tag} 巩固训练",
+                "stage": task_stage,
+                "course": task_course,
+                "knowledge_tag": tag,
+                "difficulty": round(sum(int(q["difficulty"]) for q in questions) / len(questions), 1),
+                "question_count": len(questions),
+                "reason": weak.get("reason", "根据薄弱点推荐"),
+                "questions": questions,
+            }
+        )
+    return tasks[:limit]
+
+
+def _study_roadmap_sync(user_id: int) -> dict[str, Any]:
+    stages = _stages_sync()
+    diagnosis = _diagnose_sync(user_id)
+    weak_points = diagnosis.get("weak_points") or []
+    try:
+        with SessionLocal() as db:
+            saved_plan = db.execute(
+                text(
+                    """
+                    SELECT plan_name, plan_json, updated_at
+                    FROM learning_plans
+                    WHERE user_id = :user_id
+                    ORDER BY updated_at DESC, id DESC
+                    LIMIT 1
+                    """
+                ),
+                {"user_id": user_id},
+            ).mappings().first()
+    except SQLAlchemyError:
+        saved_plan = None
+    if saved_plan:
+        plan_data = _parse_json_object(saved_plan["plan_json"])
+        if plan_data.get("weekly_plan"):
+            return {
+                "user_id": user_id,
+                "stages": stages,
+                "priority": weak_points[:3],
+                "weekly_plan": plan_data["weekly_plan"],
+                "summary": plan_data.get("headline") or str(saved_plan["plan_name"]),
+                "source": "assessment",
+                "updated_at": _json_safe(saved_plan.get("updated_at")),
+            }
+    if int(diagnosis.get("recent_record_count") or 0) == 0 or not weak_points:
+        return {
+            "user_id": user_id,
+            "stages": stages,
+            "priority": [],
+            "weekly_plan": [],
+            "summary": "暂无做题记录。完成首测后，系统会按薄弱课程生成一周学习计划。",
+        }
+    focus = weak_points[0]
+    weekly_plan = [
+        {"day": "周一", "course": focus["course"], "task": f"{focus['knowledge_tag']} 概念回顾", "minutes": 90},
+        {"day": "周二", "course": focus["course"], "task": "基础题组 + 错因标注", "minutes": 90},
+        {"day": "周三", "course": focus["course"], "task": "计算题/证明题拆解", "minutes": 90},
+        {"day": "周四", "course": "线性代数上", "task": "矩阵与向量空间复习", "minutes": 75},
+        {"day": "周五", "course": "高等数学上", "task": "混合小测", "minutes": 90},
+        {"day": "周六", "course": "综合", "task": "错题回炉与笔记整理", "minutes": 60},
+        {"day": "周日", "course": "综合", "task": "休整或轻量复盘", "minutes": 30},
+    ]
+    return {
+        "user_id": user_id,
+        "stages": stages,
+        "priority": weak_points[:3],
+        "weekly_plan": weekly_plan,
+        "summary": "学习路线按先修关系推进：基础概念先打牢，再进入计算技巧、证明方法和综合应用。",
+    }
+
+
+def _wrong_questions_sync(user_id: int, limit: int, offset: int) -> dict[str, Any]:
+    query = text(
+        f"""
+        SELECT
+          pr.id AS record_id,
+          pr.task_id,
+          pr.selected_answer,
+          pr.answer_text,
+          pr.score,
+          pr.mistake_tags AS record_mistake_tags,
+          pr.time_spent_seconds,
+          pr.practice_mode,
+          pr.answered_at,
+          {_question_select_sql()}
+        FROM practice_records AS pr
+        JOIN questions AS q ON q.id = pr.question_id
+        JOIN source_attributions AS s ON s.id = q.source_id
+        WHERE pr.user_id = :user_id AND pr.is_correct = 0
+        ORDER BY pr.answered_at DESC, pr.id DESC
+        LIMIT :limit OFFSET :offset
+        """
+    )
+    with SessionLocal() as db:
+        rows = db.execute(query, {"user_id": user_id, "limit": limit, "offset": offset}).mappings().all()
+    items = []
+    for row in rows:
+        question = _row_to_question(row, include_answer=True)
+        question.update(
+            {
+                "record_id": int(row["record_id"]),
+                "task_id": str(row["task_id"]),
+                "score": float(row["score"] or 0),
+                "answered_at": _json_safe(row["answered_at"]),
+                "record_mistake_tags": _parse_json_list(row["record_mistake_tags"]),
+            }
+        )
+        items.append(question)
+    return {"user_id": user_id, "items": items, "limit": limit, "offset": offset}
+
+
+def _get_goal_sync(user_id: int) -> dict[str, Any]:
     query = text(
         """
-        SELECT user_id, target_score, exam_date, target_exam
+        SELECT user_id, target_course, target_stage, weekly_hours, exam_date
         FROM user_goal_settings
         WHERE user_id = :user_id
         LIMIT 1
         """
     )
-    try:
-        with SessionLocal() as db:
-            _ensure_user_goal_table(db)
-            db.commit()
-            row = db.execute(query, {"user_id": user_id}).mappings().first()
-    except SQLAlchemyError as exc:
-        raise HTTPException(status_code=503, detail="目标设置表暂不可用。") from exc
-    return _goal_payload(row, user_id)
+    with SessionLocal() as db:
+        row = db.execute(query, {"user_id": user_id}).mappings().first()
+    if not row:
+        return {
+            "user_id": user_id,
+            "target_course": "高等数学上",
+            "target_stage": "大一",
+            "weekly_hours": 8.0,
+            "exam_date": None,
+            "remaining_days": None,
+        }
+    exam_date = row["exam_date"]
+    remaining_days = max((exam_date - date.today()).days, 0) if exam_date else None
+    return {
+        "user_id": int(row["user_id"]),
+        "target_course": str(row["target_course"]),
+        "target_stage": str(row["target_stage"]),
+        "weekly_hours": float(row["weekly_hours"]),
+        "exam_date": exam_date.isoformat() if exam_date else None,
+        "remaining_days": remaining_days,
+    }
 
 
-def _save_user_goal_sync(payload: UserGoalRequest) -> dict[str, Any]:
+def _save_goal_sync(payload: GoalRequest) -> dict[str, Any]:
     query = text(
         """
-        INSERT INTO user_goal_settings (user_id, target_score, exam_date, target_exam)
-        VALUES (:user_id, :target_score, :exam_date, :target_exam)
+        INSERT INTO user_goal_settings (user_id, target_course, target_stage, weekly_hours, exam_date)
+        VALUES (:user_id, :target_course, :target_stage, :weekly_hours, :exam_date)
         ON DUPLICATE KEY UPDATE
-          target_score = VALUES(target_score),
+          target_course = VALUES(target_course),
+          target_stage = VALUES(target_stage),
+          weekly_hours = VALUES(weekly_hours),
           exam_date = VALUES(exam_date),
-          target_exam = VALUES(target_exam),
           updated_at = CURRENT_TIMESTAMP
         """
     )
     try:
         with SessionLocal() as db:
-            _ensure_user_goal_table(db)
+            if not _get_user_exists(db, payload.user_id):
+                raise HTTPException(status_code=404, detail="请先注册或登录后再设置学习目标。")
             db.execute(query, payload.model_dump())
             db.commit()
+    except HTTPException:
+        raise
     except SQLAlchemyError as exc:
-        raise HTTPException(status_code=503, detail="目标设置保存失败。") from exc
-    return _get_user_goal_sync(payload.user_id)
+        raise HTTPException(status_code=503, detail="学习目标保存失败，请检查数据库连接。") from exc
+    return _get_goal_sync(payload.user_id)
 
 
-def _question_type_counts_sync() -> list[dict[str, Any]]:
-    query = text(
+def _ensure_side_feature_tables_sync() -> None:
+    statements = [
         """
-        SELECT module, knowledge_tag, COUNT(*) AS total
-        FROM questions
-        GROUP BY module, knowledge_tag
-        ORDER BY module, total DESC
+        CREATE TABLE IF NOT EXISTS user_notes (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          user_id BIGINT UNSIGNED NOT NULL,
+          title VARCHAR(160) NOT NULL,
+          content TEXT NOT NULL,
+          course VARCHAR(128) NULL,
+          knowledge_tag VARCHAR(160) NULL,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          KEY idx_user_notes_user_time (user_id, updated_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+        """,
         """
-    )
+        CREATE TABLE IF NOT EXISTS user_notifications (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          user_id BIGINT UNSIGNED NULL,
+          type VARCHAR(40) NOT NULL DEFAULT 'system',
+          title VARCHAR(160) NOT NULL,
+          content TEXT NOT NULL,
+          is_read TINYINT(1) NOT NULL DEFAULT 0,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          KEY idx_user_notifications_user_time (user_id, is_read, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS learning_resources (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          stage VARCHAR(16) NOT NULL,
+          course VARCHAR(128) NOT NULL,
+          title VARCHAR(180) NOT NULL,
+          resource_type VARCHAR(40) NOT NULL,
+          description TEXT NOT NULL,
+          url VARCHAR(512) NULL,
+          difficulty TINYINT UNSIGNED NOT NULL DEFAULT 2,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          KEY idx_learning_resources_stage_course (stage, course),
+          KEY idx_learning_resources_type (resource_type)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+        """,
+    ]
     try:
         with SessionLocal() as db:
-            rows = db.execute(query).mappings().all()
-    except SQLAlchemyError:
-        rows = []
+            for statement in statements:
+                db.execute(text(statement))
+            db.commit()
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="侧边功能数据表初始化失败，请检查 MySQL。") from exc
 
-    if rows:
-        counts = [
+
+def _seed_side_feature_data_sync(user_id: int) -> None:
+    _ensure_side_feature_tables_sync()
+    resources = [
+        ("大一", "高等数学上", "极限与连续速记讲义", "lecture", "梳理极限运算、等价无穷小、函数连续与间断点判断。", "/practice?course=高等数学上&knowledge_tag=极限与连续", 2),
+        ("大一", "高等数学上", "导数应用专项练习", "practice", "覆盖切线、单调性、极值、微分中值定理的基础题组。", "/practice?course=高等数学上&knowledge_tag=导数", 2),
+        ("大一", "线性代数上", "矩阵运算与逆矩阵", "lecture", "从矩阵乘法维度、行列式到逆矩阵条件的短讲义。", "/practice?course=线性代数上", 2),
+        ("大二", "高等数学下", "多元函数微分路线", "roadmap", "偏导数、梯度、方向导数与条件极值的学习顺序。", "/roadmap", 3),
+        ("大二", "概率论与数理统计", "随机变量与期望练习", "practice", "用离散分布和常见连续分布训练期望、方差与独立性。", "/practice?course=概率论与数理统计", 2),
+        ("大二", "级数与常微分方程", "级数判别法清单", "lecture", "比较、比值、根值、交错级数和幂级数收敛半径。", "/practice?course=级数与常微分方程", 3),
+        ("大三", "复变函数", "解析函数入门", "lecture", "复数运算、柯西-黎曼方程、解析函数与积分初步。", "/practice?course=复变函数", 3),
+        ("大三", "数值分析", "误差与迭代方法", "practice", "训练舍入误差、二分法、牛顿法和线性方程组数值解法。", "/practice?course=数值分析", 3),
+        ("大四", "数学建模与综合专题", "建模问题拆解模板", "project", "从变量、目标函数、约束条件到模型检验的完整框架。", "/practice?course=数学建模与综合专题", 3),
+    ]
+    try:
+        with SessionLocal() as db:
+            resource_count = db.execute(text("SELECT COUNT(*) FROM learning_resources")).scalar_one()
+            if not resource_count:
+                for stage, course, title, resource_type, description, url, difficulty in resources:
+                    db.execute(
+                        text(
+                            """
+                            INSERT INTO learning_resources
+                              (stage, course, title, resource_type, description, url, difficulty)
+                            VALUES
+                              (:stage, :course, :title, :resource_type, :description, :url, :difficulty)
+                            """
+                        ),
+                        {
+                            "stage": stage,
+                            "course": course,
+                            "title": title,
+                            "resource_type": resource_type,
+                            "description": description,
+                            "url": url,
+                            "difficulty": difficulty,
+                        },
+                    )
+            db.commit()
+    except SQLAlchemyError as exc:
+        raise HTTPException(status_code=503, detail="侧边功能默认数据写入失败，请检查 MySQL。") from exc
+
+
+def _messages_sync(user_id: int) -> dict[str, Any]:
+    _ensure_side_feature_tables_sync()
+    query = text(
+        """
+        SELECT id, type, title, content, is_read, created_at
+        FROM user_notifications
+        WHERE user_id = :user_id OR user_id IS NULL
+        ORDER BY is_read ASC, created_at DESC, id DESC
+        LIMIT 80
+        """
+    )
+    with SessionLocal() as db:
+        rows = db.execute(query, {"user_id": user_id}).mappings().all()
+    items = [
+        {
+            "id": int(row["id"]),
+            "type": str(row["type"]),
+            "title": str(row["title"]),
+            "content": str(row["content"]),
+            "is_read": bool(row["is_read"]),
+            "created_at": _json_safe(row["created_at"]),
+        }
+        for row in rows
+    ]
+    return {"user_id": user_id, "unread_count": sum(1 for item in items if not item["is_read"]), "items": items}
+
+
+def _profile_summary_sync(user_id: int) -> dict[str, Any]:
+    _ensure_side_feature_tables_sync()
+    with SessionLocal() as db:
+        user_row = db.execute(
+            text(
+                """
+                SELECT id, username, nickname, current_stage, created_at, last_login_at
+                FROM users
+                WHERE id = :user_id
+                LIMIT 1
+                """
+            ),
+            {"user_id": user_id},
+        ).mappings().first()
+    if not user_row:
+        raise HTTPException(status_code=404, detail="用户不存在，请先登录。")
+
+    records = _recent_records_sync(user_id, 200)
+    answered = [record for record in records if record.get("is_correct") is not None]
+    correct_count = sum(1 for record in answered if bool(record.get("is_correct")))
+    accuracy = round(correct_count / len(answered) * 100, 1) if answered else 0.0
+    total_seconds = sum(int(record.get("time_spent_seconds") or 0) for record in records)
+    diagnosis = _diagnose_sync(user_id)
+    goal = _get_goal_sync(user_id)
+    recent_records = [
+        {
+            "question_id": int(record["question_id"]),
+            "course": record["course"],
+            "knowledge_tag": record["knowledge_tag"],
+            "question_type": record["question_type"],
+            "score": float(record.get("score") or 0),
+            "is_correct": bool(record.get("is_correct")),
+            "answered_at": record.get("answered_at"),
+        }
+        for record in records[:8]
+    ]
+    return {
+        "user": {
+            "id": int(user_row["id"]),
+            "username": str(user_row["username"]),
+            "nickname": user_row["nickname"] or user_row["username"],
+            "current_stage": user_row["current_stage"] or goal["target_stage"],
+            "created_at": _json_safe(user_row["created_at"]),
+            "last_login_at": _json_safe(user_row["last_login_at"]),
+        },
+        "goal": goal,
+        "stats": {
+            "practice_count": len(records),
+            "answered_count": len(answered),
+            "correct_count": correct_count,
+            "accuracy": accuracy,
+            "study_hours": round(total_seconds / 3600, 1),
+        },
+        "weak_points": diagnosis.get("weak_points", [])[:5],
+        "recent_records": recent_records,
+    }
+
+
+def _achievements_sync(user_id: int) -> dict[str, Any]:
+    _ensure_side_feature_tables_sync()
+    records = _recent_records_sync(user_id, 300)
+    answered = [record for record in records if record.get("is_correct") is not None]
+    correct_count = sum(1 for record in answered if bool(record.get("is_correct")))
+    accuracy = round(correct_count / len(answered) * 100, 1) if answered else 0.0
+    wrong_book_count = sum(1 for record in records if record.get("practice_mode") == "wrong_book")
+    proof_count = sum(1 for record in records if record.get("question_type") == "proof")
+    mock_count = sum(1 for record in records if record.get("practice_mode") == "mock")
+    badges = [
+        {"code": "first_step", "title": "启程", "description": "完成首道练习题。", "unlocked": len(records) >= 1, "progress": min(len(records), 1), "target": 1},
+        {"code": "steady_learner", "title": "稳定推进", "description": "累计完成 3 道练习题。", "unlocked": len(records) >= 3, "progress": min(len(records), 3), "target": 3},
+        {"code": "question_builder", "title": "题感建立", "description": "累计完成 20 道练习题。", "unlocked": len(records) >= 20, "progress": min(len(records), 20), "target": 20},
+        {"code": "accurate_solver", "title": "准确解题", "description": "至少 10 题且正确率达到 80%。", "unlocked": len(answered) >= 10 and accuracy >= 80, "progress": int(accuracy), "target": 80},
+        {"code": "wrong_book", "title": "错题回炉", "description": "完成一次错题本回炉练习。", "unlocked": wrong_book_count > 0, "progress": min(wrong_book_count, 1), "target": 1},
+        {"code": "proof_beginner", "title": "证明入门", "description": "完成至少 1 道证明题。", "unlocked": proof_count > 0, "progress": min(proof_count, 1), "target": 1},
+        {"code": "mock_exam", "title": "模拟演练", "description": "完成至少 1 次模拟考试题目。", "unlocked": mock_count > 0, "progress": min(mock_count, 1), "target": 1},
+    ]
+    return {
+        "user_id": user_id,
+        "stats": {"practice_count": len(records), "accuracy": accuracy, "correct_count": correct_count},
+        "badges": badges,
+    }
+
+
+def _resources_sync(stage: str | None, course: str | None) -> dict[str, Any]:
+    _seed_side_feature_data_sync(1)
+    filters = []
+    params: dict[str, Any] = {"limit": 80}
+    if stage:
+        filters.append("stage = :stage")
+        params["stage"] = stage
+    if course:
+        filters.append("course = :course")
+        params["course"] = course
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+    query = text(
+        f"""
+        SELECT id, stage, course, title, resource_type, description, url, difficulty, created_at
+        FROM learning_resources
+        {where_clause}
+        ORDER BY FIELD(stage, '大一', '大二', '大三', '大四'), course, difficulty, id
+        LIMIT :limit
+        """
+    )
+    with SessionLocal() as db:
+        rows = db.execute(query, params).mappings().all()
+    return {
+        "stage": stage,
+        "course": course,
+        "items": [
             {
-                "module": str(row["module"]),
-                "knowledge_tag": str(row["knowledge_tag"] or "综合"),
-                "total": int(row["total"]),
+                "id": int(row["id"]),
+                "stage": row["stage"],
+                "course": row["course"],
+                "title": row["title"],
+                "resource_type": row["resource_type"],
+                "description": row["description"],
+                "url": row["url"],
+                "difficulty": int(row["difficulty"] or 1),
+                "created_at": _json_safe(row["created_at"]),
             }
             for row in rows
-        ]
-        for question in SUPPLEMENTAL_QUESTIONS:
-            counts.append(
-                {
-                    "module": question["module"],
-                    "knowledge_tag": f"{'简答题' if question['question_type'] == 'short_answer' else '材料分析'}-{question['knowledge_tag']}",
-                    "total": 1,
-                }
-            )
-        return counts
-
-    counts: dict[tuple[str, str], int] = {}
-    for row in _load_csv_question_rows():
-        key = (row["module"], row["knowledge_tag"])
-        counts[key] = counts.get(key, 0) + 1
-    counts_list = [
-        {"module": module, "knowledge_tag": tag, "total": total}
-        for (module, tag), total in sorted(counts.items())
-    ]
-    for question in SUPPLEMENTAL_QUESTIONS:
-        counts_list.append(
-            {
-                "module": question["module"],
-                "knowledge_tag": f"{'简答题' if question['question_type'] == 'short_answer' else '材料分析'}-{question['knowledge_tag']}",
-                "total": 1,
-            }
-        )
-    return counts_list
+        ],
+    }
 
 
-def _ensure_study_plan_table(db: Any) -> None:
-    db.execute(
-        text(
-            """
-            CREATE TABLE IF NOT EXISTS user_study_plans (
-              id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT COMMENT '备考方案ID',
-              user_id BIGINT UNSIGNED NOT NULL COMMENT '用户ID',
-              exam_type VARCHAR(64) NOT NULL COMMENT '考试类型',
-              job_category VARCHAR(128) NOT NULL COMMENT '岗位类别',
-              plan_name VARCHAR(128) NOT NULL COMMENT '方案名称',
-              created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-              updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-              PRIMARY KEY (id),
-              UNIQUE KEY uk_user_study_plans_user (user_id),
-              KEY idx_user_study_plans_exam (exam_type, job_category),
-              CONSTRAINT fk_user_study_plans_user
-                FOREIGN KEY (user_id) REFERENCES users (id)
-                ON DELETE CASCADE
-                ON UPDATE CASCADE
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户备考方案表'
-            """
-        )
+def _notes_sync(user_id: int) -> dict[str, Any]:
+    _ensure_side_feature_tables_sync()
+    query = text(
+        """
+        SELECT id, title, content, course, knowledge_tag, created_at, updated_at
+        FROM user_notes
+        WHERE user_id = :user_id
+        ORDER BY updated_at DESC, id DESC
+        LIMIT 100
+        """
     )
+    with SessionLocal() as db:
+        rows = db.execute(query, {"user_id": user_id}).mappings().all()
+    return {
+        "user_id": user_id,
+        "items": [
+            {
+                "id": int(row["id"]),
+                "title": row["title"],
+                "content": row["content"],
+                "course": row["course"],
+                "knowledge_tag": row["knowledge_tag"],
+                "created_at": _json_safe(row["created_at"]),
+                "updated_at": _json_safe(row["updated_at"]),
+            }
+            for row in rows
+        ],
+    }
+
+
+def _create_note_sync(payload: NoteRequest) -> dict[str, Any]:
+    _ensure_side_feature_tables_sync()
+    with SessionLocal() as db:
+        if not _get_user_exists(db, payload.user_id):
+            raise HTTPException(status_code=404, detail="用户不存在，请先登录。")
+        result = db.execute(
+            text(
+                """
+                INSERT INTO user_notes (user_id, title, content, course, knowledge_tag)
+                VALUES (:user_id, :title, :content, :course, :knowledge_tag)
+                """
+            ),
+            payload.model_dump(),
+        )
+        db.commit()
+        note_id = int(result.lastrowid)
+    notes = _notes_sync(payload.user_id)["items"]
+    return next(item for item in notes if item["id"] == note_id)
+
+
+def _update_note_sync(note_id: int, payload: NoteUpdateRequest) -> dict[str, Any]:
+    _ensure_side_feature_tables_sync()
+    update_data = payload.model_dump(exclude_none=True)
+    update_data["note_id"] = note_id
+    fields = [key for key in ("title", "content", "course", "knowledge_tag") if key in update_data]
+    if not fields:
+        raise HTTPException(status_code=400, detail="没有可更新的笔记内容。")
+    assignments = ", ".join(f"{field} = :{field}" for field in fields)
+    with SessionLocal() as db:
+        result = db.execute(
+            text(
+                f"""
+                UPDATE user_notes
+                SET {assignments}, updated_at = CURRENT_TIMESTAMP
+                WHERE id = :note_id AND user_id = :user_id
+                """
+            ),
+            update_data,
+        )
+        db.commit()
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="没有找到这条笔记。")
+    notes = _notes_sync(payload.user_id)["items"]
+    return next(item for item in notes if item["id"] == note_id)
+
+
+def _delete_note_sync(note_id: int, user_id: int) -> dict[str, Any]:
+    _ensure_side_feature_tables_sync()
+    with SessionLocal() as db:
+        result = db.execute(
+            text("DELETE FROM user_notes WHERE id = :note_id AND user_id = :user_id"),
+            {"note_id": note_id, "user_id": user_id},
+        )
+        db.commit()
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="没有找到这条笔记。")
+    return {"deleted": True, "id": note_id}
+
+
+def _normalize_session_id(session_id: str | None) -> str:
+    if not session_id:
+        return str(uuid.uuid4())
+    try:
+        return str(uuid.UUID(str(session_id)))
+    except ValueError:
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, str(session_id)))
+
 
 def _save_chat_message(user_id: int, session_id: str, role: str, content: str) -> None:
     query = text(
@@ -1053,25 +1979,17 @@ def _save_chat_message(user_id: int, session_id: str, role: str, content: str) -
         VALUES (:session_id, :user_id, :role, :content)
         """
     )
-
     try:
         with SessionLocal() as db:
-            db.execute(
-                query,
-                {
-                    "session_id": session_id,
-                    "user_id": user_id,
-                    "role": role,
-                    "content": content,
-                },
-            )
+            if not _get_user_exists(db, user_id):
+                return
+            db.execute(query, {"session_id": session_id, "user_id": user_id, "role": role, "content": content})
             db.commit()
     except SQLAlchemyError:
-        # 聊天本身不应因为历史表未创建而中断；历史接口会给出明确错误。
         return
 
 
-def _load_chat_context(user_id: int, session_id: str, limit: int = 10) -> list[dict[str, str]]:
+def _load_chat_context(user_id: int, session_id: str, limit: int = 12) -> list[dict[str, str]]:
     query = text(
         """
         SELECT role, content
@@ -1085,35 +2003,20 @@ def _load_chat_context(user_id: int, session_id: str, limit: int = 10) -> list[d
         ORDER BY created_at ASC, id ASC
         """
     )
-
     try:
         with SessionLocal() as db:
-            rows = db.execute(
-                query,
-                {"user_id": user_id, "session_id": session_id, "limit": limit},
-            ).mappings().all()
+            rows = db.execute(query, {"user_id": user_id, "session_id": session_id, "limit": limit}).mappings().all()
     except SQLAlchemyError:
         return []
-
-    return [
-        {"role": str(row["role"]), "content": str(row["content"])}
-        for row in rows
-        if row["role"] in {"user", "assistant"}
-    ]
+    return [{"role": str(row["role"]), "content": str(row["content"])} for row in rows]
 
 
-def _fetch_chat_history_sync(
-    user_id: int,
-    session_id: str | None,
-    limit: int,
-    offset: int,
-) -> list[dict[str, Any]]:
+def _chat_history_sync(user_id: int, session_id: str | None, limit: int, offset: int) -> list[dict[str, Any]]:
     params: dict[str, Any] = {"user_id": user_id, "limit": limit, "offset": offset}
     where_clause = "WHERE user_id = :user_id"
     if session_id:
         where_clause += " AND session_id = :session_id"
         params["session_id"] = session_id
-
     query = text(
         f"""
         SELECT id, session_id, user_id, role, content, created_at
@@ -1123,16 +2026,8 @@ def _fetch_chat_history_sync(
         LIMIT :limit OFFSET :offset
         """
     )
-
-    try:
-        with SessionLocal() as db:
-            rows = db.execute(query, params).mappings().all()
-    except SQLAlchemyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="聊天历史表暂不可用，请先执行 scripts/add_chat_and_plan_tables.sql。",
-        ) from exc
-
+    with SessionLocal() as db:
+        rows = db.execute(query, params).mappings().all()
     return [
         {
             "id": int(row["id"]),
@@ -1140,19 +2035,16 @@ def _fetch_chat_history_sync(
             "user_id": int(row["user_id"]),
             "role": str(row["role"]),
             "content": str(row["content"]),
-            "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+            "created_at": _json_safe(row["created_at"]),
         }
         for row in rows
     ]
 
 
-def _fetch_chat_sessions_sync(user_id: int, limit: int) -> list[dict[str, Any]]:
+def _chat_sessions_sync(user_id: int, limit: int) -> list[dict[str, Any]]:
     query = text(
         """
-        SELECT
-          session_id,
-          MAX(created_at) AS last_message_at,
-          COUNT(*) AS message_count
+        SELECT session_id, MAX(created_at) AS last_message_at, COUNT(*) AS message_count
         FROM chat_messages
         WHERE user_id = :user_id
         GROUP BY session_id
@@ -1160,255 +2052,230 @@ def _fetch_chat_sessions_sync(user_id: int, limit: int) -> list[dict[str, Any]]:
         LIMIT :limit
         """
     )
-
-    try:
-        with SessionLocal() as db:
-            rows = db.execute(query, {"user_id": user_id, "limit": limit}).mappings().all()
-    except SQLAlchemyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="聊天会话表暂不可用，请先执行 scripts/add_chat_and_plan_tables.sql。",
-        ) from exc
-
+    with SessionLocal() as db:
+        rows = db.execute(query, {"user_id": user_id, "limit": limit}).mappings().all()
     return [
         {
             "session_id": str(row["session_id"]),
-            "last_message_at": row["last_message_at"].isoformat() if row["last_message_at"] else None,
+            "last_message_at": _json_safe(row["last_message_at"]),
             "message_count": int(row["message_count"]),
         }
         for row in rows
     ]
 
 
-def _save_study_plan_sync(payload: StudyPlanRequest) -> dict[str, Any]:
-    query = text(
-        """
-        INSERT INTO user_study_plans (user_id, exam_type, job_category, plan_name)
-        VALUES (:user_id, :exam_type, :job_category, :plan_name)
-        ON DUPLICATE KEY UPDATE
-          exam_type = VALUES(exam_type),
-          job_category = VALUES(job_category),
-          plan_name = VALUES(plan_name),
-          updated_at = CURRENT_TIMESTAMP
-        """
-    )
-
-    try:
-        with SessionLocal() as db:
-            _ensure_study_plan_table(db)
-            db.execute(query, payload.model_dump())
-            db.commit()
-    except SQLAlchemyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="备考方案表暂不可用，请先执行 scripts/add_chat_and_plan_tables.sql。",
-        ) from exc
-
-    return {
-        "user_id": payload.user_id,
-        "exam_type": payload.exam_type,
-        "job_category": payload.job_category,
-        "plan_name": payload.plan_name,
-        "message": "备考方案已保存",
-    }
-
-
-def _get_study_plan_sync(user_id: int) -> dict[str, Any] | None:
-    query = text(
-        """
-        SELECT user_id, exam_type, job_category, plan_name, updated_at
-        FROM user_study_plans
-        WHERE user_id = :user_id
-        LIMIT 1
-        """
-    )
-
-    try:
-        with SessionLocal() as db:
-            _ensure_study_plan_table(db)
-            db.commit()
-            row = db.execute(query, {"user_id": user_id}).mappings().first()
-    except SQLAlchemyError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="备考方案表暂不可用，请先执行 scripts/add_chat_and_plan_tables.sql。",
-        ) from exc
-
-    if not row:
-        return None
-
-    return {
-        "user_id": int(row["user_id"]),
-        "exam_type": str(row["exam_type"]),
-        "job_category": str(row["job_category"]),
-        "plan_name": str(row["plan_name"]),
-        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
-    }
-
-
 @router.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {"status": "ok", "domain": "math_brain"}
 
 
-@router.get("/score-lines")
-async def score_lines(year: int | None = Query(default=None, ge=2020, le=2100)) -> dict[str, Any]:
-    current_year = date.today().year
-    available_years = sorted(
-        {item["year"] for group in SCORE_LINE_GROUPS for item in group["items"] if item["year"] <= current_year},
-        reverse=True,
-    )
-    selected_year = year or (available_years[0] if available_years else current_year)
-    groups: list[dict[str, Any]] = []
-    for group in SCORE_LINE_GROUPS:
-        items = [item for item in group["items"] if item["year"] == selected_year]
-        if items:
-            groups.append({"province": group["province"], "items": items})
-
-    return {
-        "current_year": current_year,
-        "selected_year": selected_year,
-        "available_years": available_years,
-        "groups": groups,
-    }
+@router.get("/stages")
+async def stages() -> dict[str, Any]:
+    return {"stages": await asyncio.to_thread(_stages_sync)}
 
 
-@router.get("/user-goals")
-async def get_user_goal(user_id: int = Query(default=1, ge=1)) -> dict[str, Any]:
-    return await asyncio.to_thread(_get_user_goal_sync, user_id)
+@router.get("/courses")
+async def courses(stage: str | None = Query(default=None, max_length=16)) -> dict[str, Any]:
+    return {"courses": await asyncio.to_thread(_courses_sync, stage)}
 
 
-@router.post("/user-goals")
-async def save_user_goal(payload: UserGoalRequest) -> dict[str, Any]:
-    return await asyncio.to_thread(_save_user_goal_sync, payload)
+@router.get("/knowledge-graph")
+async def knowledge_graph(
+    stage: str | None = Query(default=None, max_length=16),
+    course: str | None = Query(default=None, max_length=128),
+    user_id: int | None = Query(default=None, ge=1),
+) -> dict[str, Any]:
+    return await asyncio.to_thread(_knowledge_graph_sync, stage, course, user_id)
 
 
 @router.get("/question-types")
 async def question_types() -> dict[str, Any]:
-    counts = await asyncio.to_thread(_question_type_counts_sync)
-    return {
-        "modules": PRACTICE_MODULES,
-        "counts": counts,
-    }
+    return await asyncio.to_thread(_question_type_counts_sync)
 
 
 @router.get("/practice/random")
 async def random_practice(
-    module: str | None = Query(default=None, max_length=64),
-    knowledge_tag: str | None = Query(default=None, max_length=128),
-    limit: int = Query(default=5, ge=1, le=50),
+    stage: str | None = Query(default=None, max_length=16),
+    course: str | None = Query(default=None, max_length=128),
+    knowledge_tag: str | None = Query(default=None, max_length=160),
+    question_type: str | None = Query(default=None, pattern="^(choice|blank|calculation|proof|comprehensive)$"),
+    limit: int = Query(default=8, ge=1, le=50),
     mode: str = Query(default="custom", pattern="^(daily|chapter|mock|wrong_book|custom)$"),
 ) -> dict[str, Any]:
-    questions = await asyncio.to_thread(_fetch_random_questions_sync, module, knowledge_tag, limit)
-    fallback_used = False
-    if not questions and module and knowledge_tag:
-        questions = await asyncio.to_thread(_fetch_random_questions_sync, module, None, limit)
-        fallback_used = True
-    if not questions and (module or knowledge_tag):
-        questions = await asyncio.to_thread(_fetch_random_questions_sync, None, None, limit)
-        fallback_used = True
+    questions = await asyncio.to_thread(
+        _random_questions_sync,
+        stage=stage,
+        course=course,
+        knowledge_tag=knowledge_tag,
+        question_type=question_type,
+        limit=limit,
+    )
     return {
         "task_id": str(uuid.uuid4()),
         "mode": mode,
-        "module": module,
+        "stage": stage,
+        "course": course,
         "knowledge_tag": knowledge_tag,
-        "fallback_used": fallback_used,
+        "question_type": question_type,
         "questions": questions,
     }
 
 
+@router.post("/assessment/start")
+async def start_assessment(payload: AssessmentStartRequest) -> dict[str, Any]:
+    return await asyncio.to_thread(_start_assessment_sync, payload)
+
+
+@router.get("/assessment/{task_id}/report")
+async def assessment_report(
+    task_id: str,
+    user_id: int = Query(ge=1),
+) -> dict[str, Any]:
+    state = await asyncio.to_thread(_assessment_after_submit_sync, user_id, task_id)
+    if not state.get("assessment_complete"):
+        raise HTTPException(status_code=409, detail="首测尚未完成。")
+    return state["assessment_report"]
+
+
 @router.get("/mock-exam")
 async def mock_exam(
-    limit: int = Query(default=20, ge=5, le=135),
+    stage: str | None = Query(default=None, max_length=16),
+    course: str | None = Query(default=None, max_length=128),
+    limit: int = Query(default=20, ge=5, le=50),
 ) -> dict[str, Any]:
-    questions = await asyncio.to_thread(_fetch_random_questions_sync, None, None, limit)
+    questions = await asyncio.to_thread(
+        _random_questions_sync,
+        stage=stage,
+        course=course,
+        knowledge_tag=None,
+        question_type=None,
+        limit=limit,
+    )
     return {
         "task_id": str(uuid.uuid4()),
         "mode": "mock",
-        "duration_minutes": max(20, round(limit * 0.8)),
+        "duration_minutes": max(30, round(limit * 2.5)),
         "questions": questions,
     }
 
 
 @router.post("/practice/submit")
-async def submit_answer(payload: AnswerSubmissionRequest) -> dict[str, Any]:
+async def submit_answer(
+    payload: AnswerSubmissionRequest,
+    current: dict[str, Any] = Depends(current_session_user),
+) -> dict[str, Any]:
+    if current["role"] != "student" or int(current["id"]) != payload.user_id:
+        raise HTTPException(status_code=403, detail="只能提交当前登录学生自己的作答。")
     return await asyncio.to_thread(_submit_answer_sync, payload)
-
-
-@router.get("/study-plans/options")
-async def study_plan_options() -> dict[str, Any]:
-    return {"options": PLAN_OPTIONS}
-
-
-@router.get("/study-plans/current")
-async def current_study_plan(user_id: int = Query(default=1, ge=1)) -> dict[str, Any]:
-    current = await asyncio.to_thread(_get_study_plan_sync, user_id)
-    return {"user_id": user_id, "plan": current}
-
-
-@router.post("/study-plans/select")
-async def select_study_plan(payload: StudyPlanRequest) -> dict[str, Any]:
-    return await asyncio.to_thread(_save_study_plan_sync, payload)
 
 
 @router.get("/diagnose")
 async def diagnose_user(user_id: int = Query(default=1, ge=1)) -> dict[str, Any]:
-    records = await asyncio.to_thread(_fetch_combined_recent_records, user_id)
-    diagnosis_text = await asyncio.to_thread(diagnose, records)
-    scores = _scores_from_records(records)
-
-    return {
-        "user_id": user_id,
-        "diagnosis": diagnosis_text,
-        "scores": scores,
-        "recent_record_count": len(records),
-    }
+    return await asyncio.to_thread(_diagnose_sync, user_id)
 
 
 @router.get("/recommend")
 async def recommend(
-    strategy: str = Query(default=DEFAULT_STRATEGY),
-    limit: int = Query(default=10, ge=1, le=20),
+    user_id: int = Query(default=1, ge=1),
+    stage: str | None = Query(default=None, max_length=16),
+    course: str | None = Query(default=None, max_length=128),
+    limit: int = Query(default=5, ge=1, le=20),
 ) -> dict[str, Any]:
-    questions = await asyncio.to_thread(recommend_questions, strategy, limit)
-    if not questions:
-        questions = _fallback_recommendations()[:limit]
+    tasks = await asyncio.to_thread(_recommend_sync, user_id, limit, stage, course)
+    return {"user_id": user_id, "tasks": tasks, "questions": tasks}
 
-    return {
-        "strategy": strategy,
-        "questions": questions,
-    }
+
+@router.get("/study-roadmap")
+async def study_roadmap(user_id: int = Query(default=1, ge=1)) -> dict[str, Any]:
+    return await asyncio.to_thread(_study_roadmap_sync, user_id)
+
+
+@router.get("/review/wrong-questions")
+async def wrong_questions(
+    user_id: int = Query(default=1, ge=1),
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> dict[str, Any]:
+    return await asyncio.to_thread(_wrong_questions_sync, user_id, limit, offset)
+
+
+@router.get("/user-goals")
+async def get_user_goal(user_id: int = Query(default=1, ge=1)) -> dict[str, Any]:
+    return await asyncio.to_thread(_get_goal_sync, user_id)
+
+
+@router.post("/user-goals")
+async def save_user_goal(payload: GoalRequest) -> dict[str, Any]:
+    return await asyncio.to_thread(_save_goal_sync, payload)
+
+
+@router.get("/messages")
+async def messages(user_id: int = Query(default=1, ge=1)) -> dict[str, Any]:
+    return await asyncio.to_thread(_messages_sync, user_id)
+
+
+@router.get("/profile/summary")
+async def profile_summary(user_id: int = Query(default=1, ge=1)) -> dict[str, Any]:
+    return await asyncio.to_thread(_profile_summary_sync, user_id)
+
+
+@router.get("/achievements")
+async def achievements(user_id: int = Query(default=1, ge=1)) -> dict[str, Any]:
+    return await asyncio.to_thread(_achievements_sync, user_id)
+
+
+@router.get("/resources")
+async def resources(
+    stage: str | None = Query(default=None, max_length=16),
+    course: str | None = Query(default=None, max_length=128),
+) -> dict[str, Any]:
+    return await asyncio.to_thread(_resources_sync, stage, course)
+
+
+@router.get("/notes")
+async def notes(user_id: int = Query(default=1, ge=1)) -> dict[str, Any]:
+    return await asyncio.to_thread(_notes_sync, user_id)
+
+
+@router.post("/notes", status_code=status.HTTP_201_CREATED)
+async def create_note(payload: NoteRequest) -> dict[str, Any]:
+    return await asyncio.to_thread(_create_note_sync, payload)
+
+
+@router.put("/notes/{note_id}")
+async def update_note(note_id: int, payload: NoteUpdateRequest) -> dict[str, Any]:
+    return await asyncio.to_thread(_update_note_sync, note_id, payload)
+
+
+@router.delete("/notes/{note_id}")
+async def delete_note(note_id: int, user_id: int = Query(ge=1)) -> dict[str, Any]:
+    return await asyncio.to_thread(_delete_note_sync, note_id, user_id)
 
 
 async def _chat_event_stream(request: ChatRequest):
     session_id = _normalize_session_id(request.session_id)
-    previous_messages = await asyncio.to_thread(
-        _load_chat_context,
-        request.user_id,
-        session_id,
-    )
+    previous_messages = await asyncio.to_thread(_load_chat_context, request.user_id, session_id)
+    diagnosis = await asyncio.to_thread(_diagnose_sync, request.user_id)
     messages = [
+        {"role": "system", "content": CHAT_SYSTEM_PROMPT},
         {
             "role": "system",
-            "content": CHAT_SYSTEM_PROMPT,
+            "content": f"当前诊断摘要：{diagnosis.get('summary')}；薄弱点：{json.dumps(diagnosis.get('weak_points'), ensure_ascii=False)}",
         },
         *previous_messages,
         {"role": "user", "content": request.message},
     ]
     reply = await asyncio.to_thread(call_llm, messages)
     if not reply:
-        reply = "我建议先做一组判断推理，再复盘错因。"
+        reply = "我建议先做一组极限与连续的基础题，再把错误按“概念混淆 / 计算失误 / 思路断点”三类标注。"
 
     await asyncio.to_thread(_save_chat_message, request.user_id, session_id, "user", request.message)
     await asyncio.to_thread(_save_chat_message, request.user_id, session_id, "assistant", reply)
 
     yield f"data: {json.dumps({'session_id': session_id}, ensure_ascii=False)}\n\n"
-
     for char in reply:
-        payload = json.dumps({"delta": char}, ensure_ascii=False)
-        yield f"data: {payload}\n\n"
-        await asyncio.sleep(0.03)
-
+        yield f"data: {json.dumps({'delta': char}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0.025)
     yield "data: [DONE]\n\n"
 
 
@@ -1433,18 +2300,8 @@ async def chat_history(
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     normalized_session = _normalize_session_id(session_id) if session_id else None
-    messages = await asyncio.to_thread(
-        _fetch_chat_history_sync,
-        user_id,
-        normalized_session,
-        limit,
-        offset,
-    )
-    return {
-        "user_id": user_id,
-        "session_id": normalized_session,
-        "messages": messages,
-    }
+    messages = await asyncio.to_thread(_chat_history_sync, user_id, normalized_session, limit, offset)
+    return {"user_id": user_id, "session_id": normalized_session, "messages": messages}
 
 
 @router.get("/chat/sessions")
@@ -1452,5 +2309,5 @@ async def chat_sessions(
     user_id: int = Query(default=1, ge=1),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
-    sessions = await asyncio.to_thread(_fetch_chat_sessions_sync, user_id, limit)
+    sessions = await asyncio.to_thread(_chat_sessions_sync, user_id, limit)
     return {"user_id": user_id, "sessions": sessions}

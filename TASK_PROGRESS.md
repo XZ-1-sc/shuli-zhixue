@@ -92,7 +92,7 @@
 - 容器状态：`backend`、`gateway`、`tunnel` 均为 `Up`
 - 本机入口：`http://localhost:8080/` 返回首页 HTML
 - 健康检查：`http://localhost:8080/api/health` 返回 `{"status":"ok"}`
-- 登录接口：`树虫 / 123456` 登录成功
+- 登录接口：已有测试账号登录成功（凭据只保存在本机）
 - Cloudflare Tunnel：`https://receiver-minneapolis-trusted-darwin.trycloudflare.com`
 - 公网健康检查：`/api/health` 返回 `{"status":"ok"}`
 - 公网首页：返回首页 HTML

@@ -22,6 +22,7 @@ Thumbs.db
 
 # Local runtime and generated artifacts
 tmp/
+backups/
 *.log
 .agents/
 garden-gpt-image-2/
@@ -38,3 +39,5 @@ backend/.env.*
 
 # Docker local state
 docker-data/
+uploads/
+backend/uploads/

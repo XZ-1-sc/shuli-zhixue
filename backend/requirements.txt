@@ -11,3 +11,6 @@ langchain
 langchain-openai
 numpy
 pandas
+openpyxl
+Pillow
+python-multipart

@@ -1,0 +1,23 @@
+{
+  "database": "math_brain",
+  "question_count": 680,
+  "stage_counts": {
+    "大一": 213,
+    "大三": 70,
+    "大二": 312,
+    "大四": 85
+  },
+  "type_counts": {
+    "choice": 136,
+    "blank": 136,
+    "calculation": 136,
+    "proof": 136,
+    "comprehensive": 136
+  },
+  "source_count": 3,
+  "knowledge_node_count": 57,
+  "backup_path": "D:\\「行测智脑」——基于多智能体协作的公考全科个性化导航系统\\backups\\xingce_backup_20260715_145646.sql",
+  "questions_csv": "D:\\「行测智脑」——基于多智能体协作的公考全科个性化导航系统\\data\\math_questions.csv",
+  "knowledge_graph": "D:\\「行测智脑」——基于多智能体协作的公考全科个性化导航系统\\data\\math_knowledge_graph.json",
+  "generated_at": "2026-07-15T14:57:01"
+}

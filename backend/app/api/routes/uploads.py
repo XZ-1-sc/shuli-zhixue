@@ -1,0 +1,308 @@
+import hashlib
+import uuid
+from datetime import datetime
+from io import BytesIO
+from pathlib import Path
+from typing import Any
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
+from PIL import Image, ImageOps, UnidentifiedImageError
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+
+from ...database.session import BACKEND_DIR, SessionLocal, settings
+from ...security import current_session_user
+
+
+router = APIRouter(prefix="/api", tags=["answer-uploads"])
+
+MAX_FILES_PER_REQUEST = 5
+MAX_IMAGE_PIXELS = 25_000_000
+ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
+
+
+def _upload_root() -> Path:
+    configured = Path(settings.upload_dir).expanduser()
+    root = configured if configured.is_absolute() else BACKEND_DIR / configured
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
+
+
+def _active_user_exists(user_id: int, role: str | None = None) -> bool:
+    with SessionLocal() as db:
+        return bool(
+            db.execute(
+                text("SELECT 1 FROM users WHERE id = :user_id AND (:role IS NULL OR role = :role) AND status = 1 LIMIT 1"),
+                {"user_id": user_id, "role": role},
+            ).first()
+        )
+
+
+def _normalize_image(raw: bytes) -> tuple[bytes, str, str, int, int]:
+    Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+    try:
+        with Image.open(BytesIO(raw)) as probe:
+            image_format = str(probe.format or "").upper()
+            if image_format not in ALLOWED_FORMATS:
+                raise HTTPException(status_code=415, detail="仅支持 JPEG、PNG 或 WebP 图片。")
+            probe.verify()
+
+        with Image.open(BytesIO(raw)) as source:
+            image = ImageOps.exif_transpose(source)
+            image.load()
+            width, height = image.size
+            if width < 32 or height < 32:
+                raise HTTPException(status_code=422, detail="图片尺寸过小，请上传清晰的作答图片。")
+            if width * height > MAX_IMAGE_PIXELS:
+                raise HTTPException(status_code=413, detail="图片像素过大，请压缩后重试。")
+
+            output = BytesIO()
+            has_alpha = image.mode in {"RGBA", "LA"} or "transparency" in image.info
+            if has_alpha:
+                image.convert("RGBA").save(output, format="PNG", optimize=True)
+                extension, mime_type = ".png", "image/png"
+            else:
+                image.convert("RGB").save(output, format="JPEG", quality=92, optimize=True)
+                extension, mime_type = ".jpg", "image/jpeg"
+            return output.getvalue(), extension, mime_type, width, height
+    except HTTPException:
+        raise
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=415, detail="图片文件无效或已损坏。") from exc
+
+
+def _store_upload(
+    *,
+    user_id: int,
+    original_name: str,
+    normalized: bytes,
+    extension: str,
+    mime_type: str,
+    width: int,
+    height: int,
+) -> dict[str, Any]:
+    now = datetime.now()
+    relative_dir = Path("answers") / f"{now:%Y}" / f"{now:%m}"
+    filename = f"{uuid.uuid4().hex}{extension}"
+    relative_path = relative_dir / filename
+    absolute_path = _upload_root() / relative_path
+    absolute_path.parent.mkdir(parents=True, exist_ok=True)
+    absolute_path.write_bytes(normalized)
+    digest = hashlib.sha256(normalized).hexdigest()
+
+    try:
+        with SessionLocal() as db:
+            result = db.execute(
+                text(
+                    """
+                    INSERT INTO uploaded_files (
+                      user_id, original_name, storage_key, mime_type, size_bytes,
+                      sha256, width, height
+                    )
+                    VALUES (
+                      :user_id, :original_name, :storage_key, :mime_type, :size_bytes,
+                      :sha256, :width, :height
+                    )
+                    """
+                ),
+                {
+                    "user_id": user_id,
+                    "original_name": (original_name or "作答图片")[:255],
+                    "storage_key": relative_path.as_posix(),
+                    "mime_type": mime_type,
+                    "size_bytes": len(normalized),
+                    "sha256": digest,
+                    "width": width,
+                    "height": height,
+                },
+            )
+            file_id = int(result.lastrowid)
+            db.commit()
+    except SQLAlchemyError as exc:
+        absolute_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=503, detail="图片记录保存失败，请稍后重试。") from exc
+
+    return {
+        "id": file_id,
+        "name": original_name or "作答图片",
+        "mime_type": mime_type,
+        "size_bytes": len(normalized),
+        "width": width,
+        "height": height,
+        "url": f"/api/files/{file_id}",
+    }
+
+
+@router.post("/uploads/answer-images", status_code=status.HTTP_201_CREATED)
+async def upload_answer_images(
+    user_id: int = Form(ge=1),
+    files: list[UploadFile] = File(...),
+    current: dict[str, Any] = Depends(current_session_user),
+) -> dict[str, Any]:
+    if current["role"] != "student" or int(current["id"]) != user_id:
+        raise HTTPException(status_code=403, detail="只能为当前登录的学生账号上传作答图片。")
+    if not _active_user_exists(user_id, "student"):
+        raise HTTPException(status_code=404, detail="学生账号不存在或已停用。")
+    if not files or len(files) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(status_code=422, detail=f"每次最多上传 {MAX_FILES_PER_REQUEST} 张图片。")
+
+    prepared: list[tuple[str, bytes, str, str, int, int]] = []
+    for file in files:
+        raw = await file.read(settings.max_answer_image_bytes + 1)
+        original_name = file.filename or "作答图片"
+        await file.close()
+        if not raw:
+            raise HTTPException(status_code=422, detail="不能上传空图片。")
+        if len(raw) > settings.max_answer_image_bytes:
+            raise HTTPException(status_code=413, detail="单张图片不能超过 8 MB。")
+        normalized, extension, mime_type, width, height = _normalize_image(raw)
+        prepared.append((original_name, normalized, extension, mime_type, width, height))
+
+    uploaded: list[dict[str, Any]] = []
+    for original_name, normalized, extension, mime_type, width, height in prepared:
+        uploaded.append(
+            _store_upload(
+                user_id=user_id,
+                original_name=original_name,
+                normalized=normalized,
+                extension=extension,
+                mime_type=mime_type,
+                width=width,
+                height=height,
+            )
+        )
+    return {"files": uploaded, "max_files": MAX_FILES_PER_REQUEST}
+
+
+@router.post("/uploads/question-images", status_code=status.HTTP_201_CREATED)
+async def upload_question_images(
+    files: list[UploadFile] = File(...),
+    current: dict[str, Any] = Depends(current_session_user),
+) -> dict[str, Any]:
+    if current["role"] not in {"teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="只有教师账号可以上传题目图片。")
+    if not files or len(files) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(status_code=422, detail=f"每次最多上传 {MAX_FILES_PER_REQUEST} 张图片。")
+    uploaded: list[dict[str, Any]] = []
+    for file in files:
+        raw = await file.read(settings.max_answer_image_bytes + 1)
+        original_name = file.filename or "题目图片"
+        await file.close()
+        if not raw:
+            raise HTTPException(status_code=422, detail="不能上传空图片。")
+        if len(raw) > settings.max_answer_image_bytes:
+            raise HTTPException(status_code=413, detail="单张图片不能超过 8 MB。")
+        normalized, extension, mime_type, width, height = _normalize_image(raw)
+        uploaded.append(
+            _store_upload(
+                user_id=int(current["id"]), original_name=original_name, normalized=normalized,
+                extension=extension, mime_type=mime_type, width=width, height=height,
+            )
+        )
+    return {"files": uploaded, "max_files": MAX_FILES_PER_REQUEST}
+
+
+@router.get("/files/{file_id}")
+async def read_uploaded_file(
+    file_id: int,
+    current: dict[str, Any] = Depends(current_session_user),
+) -> FileResponse:
+    with SessionLocal() as db:
+        row = db.execute(
+            text(
+                """
+                SELECT storage_key, mime_type, user_id
+                FROM uploaded_files
+                WHERE id = :file_id
+                LIMIT 1
+                """
+            ),
+            {"file_id": file_id},
+        ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=404, detail="图片不存在。")
+    can_read = int(row["user_id"]) == int(current["id"])
+    if not can_read and current["role"] in {"teacher", "admin"}:
+        with SessionLocal() as db:
+            can_read = bool(
+                db.execute(
+                    text(
+                        """
+                        SELECT 1 FROM class_members AS cm
+                        JOIN classes AS c ON c.id=cm.class_id
+                        WHERE cm.student_id=:student_id AND cm.status='active'
+                          AND c.teacher_id=:teacher_id AND c.status='active' LIMIT 1
+                        """
+                    ),
+                    {"student_id": row["user_id"], "teacher_id": current["id"]},
+                ).first()
+            )
+    if not can_read and current["role"] == "student":
+        with SessionLocal() as db:
+            can_read = bool(
+                db.execute(
+                    text(
+                        """
+                        SELECT 1
+                        FROM question_attachments qa
+                        JOIN questions q ON q.id=qa.question_id
+                        WHERE qa.uploaded_file_id=:file_id
+                          AND q.deleted_at IS NULL
+                          AND (
+                            (q.publish_status='published' AND q.visibility='public')
+                            OR EXISTS (
+                              SELECT 1
+                              FROM assignment_questions aq
+                              JOIN assignments a ON a.id=aq.assignment_id
+                              JOIN class_members cm ON cm.class_id=a.class_id
+                              WHERE aq.question_id=q.id
+                                AND a.status IN ('published','closed')
+                                AND cm.student_id=:student_id AND cm.status='active'
+                            )
+                          )
+                        LIMIT 1
+                        """
+                    ),
+                    {"file_id": file_id, "student_id": current["id"]},
+                ).first()
+            )
+    if not can_read:
+        raise HTTPException(status_code=403, detail="你没有权限查看这张图片。")
+
+    root = _upload_root()
+    path = (root / str(row["storage_key"])).resolve()
+    if root not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="图片文件不存在。")
+    return FileResponse(path, media_type=str(row["mime_type"]), headers={"Cache-Control": "private, max-age=3600"})
+
+
+@router.delete("/uploads/{file_id}")
+async def delete_unlinked_upload(
+    file_id: int,
+    current: dict[str, Any] = Depends(current_session_user),
+) -> dict[str, bool]:
+    user_id = int(current["id"])
+    with SessionLocal() as db:
+        row = db.execute(
+            text(
+                """
+                SELECT uf.storage_key
+                FROM uploaded_files AS uf
+                LEFT JOIN answer_attachments AS aa ON aa.uploaded_file_id = uf.id
+                LEFT JOIN question_attachments AS qa ON qa.uploaded_file_id = uf.id
+                WHERE uf.id = :file_id AND uf.user_id = :user_id AND aa.id IS NULL AND qa.id IS NULL
+                LIMIT 1
+                """
+            ),
+            {"file_id": file_id, "user_id": user_id},
+        ).mappings().first()
+        if not row:
+            raise HTTPException(status_code=409, detail="图片不存在，或已绑定到答题记录。")
+        db.execute(text("DELETE FROM uploaded_files WHERE id = :file_id"), {"file_id": file_id})
+        db.commit()
+
+    path = (_upload_root() / str(row["storage_key"])).resolve()
+    if _upload_root() in path.parents:
+        path.unlink(missing_ok=True)
+    return {"deleted": True}
