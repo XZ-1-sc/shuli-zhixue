@@ -397,7 +397,6 @@ async function loadQuestions() {
     let data;
     if (isAssessment.value) {
       data = await apiPost("/api/assessment/start", {
-        user_id: user.userId,
         stage: filters.stage || null,
         limit: filters.limit,
         restart: false
@@ -502,7 +501,7 @@ function handleDrop(event) {
 
 async function removeAttachment(file) {
   try {
-    await apiDelete(`/api/uploads/${file.id}`, { user_id: user.userId });
+    await apiDelete(`/api/uploads/${file.id}`);
     attachmentsByQuestion[currentQuestionId.value] = attachments.value.filter((item) => item.id !== file.id);
   } catch (error) {
     uploadError.value = error.message;
@@ -520,7 +519,6 @@ async function submitAnswer() {
   pageError.value = "";
   try {
     const response = await apiPost("/api/practice/submit", {
-      user_id: user.userId,
       task_id: filters.task_id || "local-task",
       question_id: currentQuestion.value.id,
       selected_answer: selectedAnswer.value || null,
@@ -579,7 +577,6 @@ async function saveNote() {
   savingNote.value = true;
   try {
     await apiPost("/api/notes", {
-      user_id: user.userId,
       title: `${currentQuestion.value.fine_tag || currentQuestion.value.knowledge_tag} · 第 ${currentIndex.value + 1} 题`,
       content: noteText.value.trim(),
       course: currentQuestion.value.course,

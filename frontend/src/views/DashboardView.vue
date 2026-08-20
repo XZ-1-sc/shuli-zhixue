@@ -268,7 +268,6 @@ async function saveGoal() {
     return;
   }
   const data = await apiPost("/api/user-goals", {
-    user_id: user.userId,
     target_stage: goal.target_stage,
     target_course: goal.target_course,
     weekly_hours: goal.weekly_hours,
@@ -307,10 +306,10 @@ async function load() {
     return;
   }
   const [goalData, diagnoseData, recommendData, profileData] = await Promise.all([
-    apiGet("/api/user-goals", { user_id: user.userId }).catch(() => ({})),
-    apiGet("/api/diagnose", { user_id: user.userId }),
-    apiGet("/api/recommend", { user_id: user.userId, limit: 5 }),
-    apiGet("/api/profile/summary", { user_id: user.userId }).catch(() => ({}))
+    apiGet("/api/user-goals").catch(() => ({})),
+    apiGet("/api/diagnose"),
+    apiGet("/api/recommend", { limit: 5 }),
+    apiGet("/api/profile/summary").catch(() => ({}))
   ]);
   Object.assign(goal, {
     target_stage: goalData.target_stage || "大一",

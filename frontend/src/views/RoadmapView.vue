@@ -185,6 +185,6 @@ const weeklyPlan = computed(() => roadmap.value.weekly_plan || [
 const flowCourses = ["高等数学（上）", "高等数学（下）", "线性代数（上）", "概率论与数理统计", "复变函数", "实变函数", "抽象代数", "数学建模", "数值分析"];
 
 onMounted(async () => {
-  roadmap.value = await apiGet("/api/study-roadmap", { user_id: user.userId || 1 });
+  roadmap.value = await apiGet("/api/study-roadmap");
 });
 </script>

@@ -395,16 +395,16 @@ function fileTypeSymbol(file) {
 }
 
 async function loadMessages() {
-  const data = await apiGet("/api/messages", { user_id: user.userId });
+  const data = await apiGet("/api/messages");
   messages.value = data.items || [];
 }
 
 async function loadProfile() {
-  profile.value = await apiGet("/api/profile/summary", { user_id: user.userId });
+  profile.value = await apiGet("/api/profile/summary");
 }
 
 async function loadAchievements() {
-  const data = await apiGet("/api/achievements", { user_id: user.userId });
+  const data = await apiGet("/api/achievements");
   achievements.value = data.badges || [];
 }
 
@@ -414,12 +414,12 @@ async function loadResources() {
 }
 
 async function loadNotes() {
-  const data = await apiGet("/api/notes", { user_id: user.userId });
+  const data = await apiGet("/api/notes");
   notes.value = data.items || [];
 }
 
 async function loadSettings() {
-  const data = await apiGet("/api/user-goals", { user_id: user.userId });
+  const data = await apiGet("/api/user-goals");
   Object.assign(settings, {
     target_stage: data.target_stage || "大一",
     target_course: data.target_course || "高等数学上",
@@ -549,7 +549,6 @@ async function saveNote() {
     return;
   }
   const payload = {
-    user_id: user.userId,
     title: noteForm.title.trim(),
     content: noteForm.content.trim(),
     course: noteForm.course.trim() || null,
@@ -571,7 +570,7 @@ async function saveNote() {
 }
 
 async function removeNote(noteId) {
-  await apiDelete(`/api/notes/${noteId}`, { user_id: user.userId });
+  await apiDelete(`/api/notes/${noteId}`);
   if (editingNoteId.value === noteId) {
     clearNoteForm();
   }
@@ -581,7 +580,6 @@ async function removeNote(noteId) {
 async function saveSettings() {
   settingsSaved.value = false;
   await apiPost("/api/user-goals", {
-    user_id: user.userId,
     target_stage: settings.target_stage,
     target_course: settings.target_course,
     weekly_hours: Number(settings.weekly_hours || 8),

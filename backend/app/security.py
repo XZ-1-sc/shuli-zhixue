@@ -135,3 +135,12 @@ def require_student(request: Request) -> dict[str, Any]:
     if user["role"] != "student":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="当前账号没有学生端权限。")
     return user
+
+
+def require_student_user(request: Request) -> dict[str, Any]:
+    user = current_session_user(request)
+    if user["role"] not in {"student", "admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="当前账号没有学生端权限。")
+    if "user_id" in request.query_params:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="学生端接口不接受 user_id，请使用当前会话账号。")
+    return user

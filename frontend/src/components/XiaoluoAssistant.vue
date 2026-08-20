@@ -127,13 +127,13 @@ async function toggleHistory() {
 
 async function loadSessions() {
   if (!user.userId) return;
-  const data = await apiGet("/api/chat/sessions", { user_id: user.userId, limit: 20 }).catch(() => ({ sessions: [] }));
+  const data = await apiGet("/api/chat/sessions", { limit: 20 }).catch(() => ({ sessions: [] }));
   sessions.value = data.sessions || [];
 }
 
 async function loadSession(sessionId) {
   if (!user.userId) return;
-  const data = await apiGet("/api/chat/history", { user_id: user.userId, session_id: sessionId, limit: 100 });
+  const data = await apiGet("/api/chat/history", { session_id: sessionId, limit: 100 });
   messages.value = [...(data.messages || [])].reverse().map((item) => ({ ...item, id: item.id || `${item.role}-${Math.random()}` }));
   user.saveSessionId(sessionId);
   historyOpen.value = false;
@@ -156,7 +156,7 @@ async function send() {
   await scrollToLatest();
   try {
     await streamChat(
-      { user_id: user.userId, message: content, session_id: user.sessionId() },
+      { message: content, session_id: user.sessionId() },
       {
         onSession: (sessionId) => user.saveSessionId(sessionId),
         onDelta: (delta) => {

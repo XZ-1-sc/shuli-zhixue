@@ -97,7 +97,7 @@ async function load() {
     active.value = null;
     return;
   }
-  const data = await apiGet("/api/review/wrong-questions", { user_id: user.userId, limit: 30 });
+  const data = await apiGet("/api/review/wrong-questions", { limit: 30 });
   items.value = data.items || [];
   active.value = items.value[0] || null;
 }

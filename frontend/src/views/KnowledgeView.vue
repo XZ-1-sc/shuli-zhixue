@@ -303,8 +303,7 @@ async function loadGraph() {
   loadingGraph.value = true;
   const data = await apiGet("/api/knowledge-graph", {
     stage: selectedStage.value,
-    course: selectedCourse.value,
-    user_id: user.userId || ""
+    course: selectedCourse.value
   });
   graphData.value = data;
   selectedNode.value = null;
@@ -319,8 +318,8 @@ async function loadAll() {
   await loadGraph();
   if (user.userId) {
     const [diagnoseData, wrongData] = await Promise.all([
-      apiGet("/api/diagnose", { user_id: user.userId }),
-      apiGet("/api/review/wrong-questions", { user_id: user.userId, limit: 10 }).catch(() => ({ items: [] }))
+      apiGet("/api/diagnose"),
+      apiGet("/api/review/wrong-questions", { limit: 10 }).catch(() => ({ items: [] }))
     ]);
     diagnosis.value = diagnoseData;
     wrongRecords.value = wrongData.items || [];

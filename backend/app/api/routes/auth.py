@@ -1,13 +1,13 @@
 import asyncio
-import hmac
-from typing import Literal
+import hashlib
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError, SQLAlchemyError
 
-from ...database.session import SessionLocal, settings
+from ...database.session import SessionLocal
 from ...security import (
     SESSION_COOKIE_NAME,
     create_auth_session_sync,
@@ -48,6 +48,44 @@ def _raise_database_error(exc: SQLAlchemyError) -> None:
     if isinstance(exc, OperationalError) and "1045" in str(exc):
         detail = "数据库账号或密码不正确，请检查 backend/.env 里的 DATABASE_URL。"
     raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=detail) from exc
+
+
+def _cookie_is_secure(request: Request) -> bool:
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+    return request.url.scheme == "https" or forwarded_proto == "https"
+
+
+def _consume_teacher_invite_code(db: Any, submitted_code: str) -> int:
+    code_hash = hashlib.sha256(submitted_code.encode("utf-8")).hexdigest()
+    row = db.execute(
+        text(
+            """
+            SELECT id
+            FROM teacher_invite_codes
+            WHERE code_hash = :code_hash
+              AND status = 'active'
+              AND (expires_at IS NULL OR expires_at > NOW())
+              AND (max_uses IS NULL OR used_count < max_uses)
+            LIMIT 1
+            FOR UPDATE
+            """
+        ),
+        {"code_hash": code_hash},
+    ).mappings().first()
+    if not row:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="教师邀请码无效、已过期或已用完。")
+    code_id = int(row["id"])
+    db.execute(
+        text(
+            """
+            UPDATE teacher_invite_codes
+            SET used_count = used_count + 1, last_used_at = NOW(), updated_at = CURRENT_TIMESTAMP
+            WHERE id = :code_id
+            """
+        ),
+        {"code_id": code_id},
+    )
+    return code_id
 
 
 def _ensure_auth_schema_sync() -> None:
@@ -156,17 +194,6 @@ def _register_sync(payload: RegisterRequest) -> LoginResponse:
     if len(username) < 2:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="用户名至少需要 2 个字符。")
 
-    if payload.role == "teacher":
-        configured_code = settings.teacher_invite_code.strip()
-        submitted_code = (payload.teacher_invite_code or "").strip()
-        if not configured_code:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="教师注册暂未配置邀请码，请联系系统管理员。",
-            )
-        if not hmac.compare_digest(submitted_code, configured_code):
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="教师邀请码无效。")
-
     insert_query = text(
         """
         INSERT INTO users (username, password_hash, nickname, role, current_stage)
@@ -175,6 +202,11 @@ def _register_sync(payload: RegisterRequest) -> LoginResponse:
     )
     try:
         with SessionLocal() as db:
+            if payload.role == "teacher":
+                submitted_code = (payload.teacher_invite_code or "").strip()
+                if not submitted_code:
+                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="请输入教师邀请码。")
+                _consume_teacher_invite_code(db, submitted_code)
             result = db.execute(
                 insert_query,
                 {
@@ -212,7 +244,7 @@ def _register_sync(payload: RegisterRequest) -> LoginResponse:
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(payload: LoginRequest, response: Response) -> LoginResponse:
+async def login(payload: LoginRequest, response: Response, request: Request) -> LoginResponse:
     result = await asyncio.to_thread(_login_sync, payload)
     token, max_age = await asyncio.to_thread(create_auth_session_sync, result.user_id, payload.remember)
     response.set_cookie(
@@ -221,14 +253,14 @@ async def login(payload: LoginRequest, response: Response) -> LoginResponse:
         max_age=max_age,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=_cookie_is_secure(request),
         path="/",
     )
     return result
 
 
 @router.post("/register", response_model=LoginResponse)
-async def register(payload: RegisterRequest, response: Response) -> LoginResponse:
+async def register(payload: RegisterRequest, response: Response, request: Request) -> LoginResponse:
     result = await asyncio.to_thread(_register_sync, payload)
     token, max_age = await asyncio.to_thread(create_auth_session_sync, result.user_id, payload.remember)
     response.set_cookie(
@@ -237,7 +269,7 @@ async def register(payload: RegisterRequest, response: Response) -> LoginRespons
         max_age=max_age,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=_cookie_is_secure(request),
         path="/",
     )
     return result
