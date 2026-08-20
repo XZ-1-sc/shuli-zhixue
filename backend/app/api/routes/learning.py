@@ -1631,123 +1631,7 @@ def _save_goal_sync(user_id: int, payload: GoalRequest) -> dict[str, Any]:
     return _get_goal_sync(user_id)
 
 
-def _ensure_side_feature_tables_sync() -> None:
-    statements = [
-        """
-        CREATE TABLE IF NOT EXISTS user_notes (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          user_id BIGINT UNSIGNED NOT NULL,
-          title VARCHAR(160) NOT NULL,
-          content TEXT NOT NULL,
-          course VARCHAR(128) NULL,
-          knowledge_tag VARCHAR(160) NULL,
-          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          PRIMARY KEY (id),
-          KEY idx_user_notes_user_time (user_id, updated_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS user_notifications (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          user_id BIGINT UNSIGNED NULL,
-          type VARCHAR(40) NOT NULL DEFAULT 'system',
-          title VARCHAR(160) NOT NULL,
-          content TEXT NOT NULL,
-          is_read TINYINT(1) NOT NULL DEFAULT 0,
-          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (id),
-          KEY idx_user_notifications_user_time (user_id, is_read, created_at)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS learning_resources (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          stage VARCHAR(16) NOT NULL,
-          course VARCHAR(128) NOT NULL,
-          title VARCHAR(180) NOT NULL,
-          resource_type VARCHAR(40) NOT NULL,
-          description TEXT NOT NULL,
-          url VARCHAR(512) NULL,
-          difficulty TINYINT UNSIGNED NOT NULL DEFAULT 2,
-          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (id),
-          KEY idx_learning_resources_stage_course (stage, course),
-          KEY idx_learning_resources_type (resource_type)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS note_attachments (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          note_id BIGINT UNSIGNED NOT NULL,
-          uploaded_file_id BIGINT UNSIGNED NOT NULL,
-          sort_order TINYINT UNSIGNED NOT NULL DEFAULT 1,
-          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (id),
-          UNIQUE KEY uk_note_attachments_file (uploaded_file_id),
-          KEY idx_note_attachments_note (note_id, sort_order),
-          CONSTRAINT fk_note_attachments_note
-            FOREIGN KEY (note_id) REFERENCES user_notes (id)
-            ON DELETE CASCADE ON UPDATE CASCADE,
-          CONSTRAINT fk_note_attachments_file
-            FOREIGN KEY (uploaded_file_id) REFERENCES uploaded_files (id)
-            ON DELETE CASCADE ON UPDATE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-        """,
-    ]
-    try:
-        with SessionLocal() as db:
-            for statement in statements:
-                db.execute(text(statement))
-            db.commit()
-    except SQLAlchemyError as exc:
-        raise HTTPException(status_code=503, detail="侧边功能数据表初始化失败，请检查 MySQL。") from exc
-
-
-def _seed_side_feature_data_sync(user_id: int) -> None:
-    _ensure_side_feature_tables_sync()
-    resources = [
-        ("大一", "高等数学上", "极限与连续速记讲义", "lecture", "梳理极限运算、等价无穷小、函数连续与间断点判断。", "/practice?course=高等数学上&knowledge_tag=极限与连续", 2),
-        ("大一", "高等数学上", "导数应用专项练习", "practice", "覆盖切线、单调性、极值、微分中值定理的基础题组。", "/practice?course=高等数学上&knowledge_tag=导数", 2),
-        ("大一", "线性代数上", "矩阵运算与逆矩阵", "lecture", "从矩阵乘法维度、行列式到逆矩阵条件的短讲义。", "/practice?course=线性代数上", 2),
-        ("大二", "高等数学下", "多元函数微分路线", "roadmap", "偏导数、梯度、方向导数与条件极值的学习顺序。", "/roadmap", 3),
-        ("大二", "概率论与数理统计", "随机变量与期望练习", "practice", "用离散分布和常见连续分布训练期望、方差与独立性。", "/practice?course=概率论与数理统计", 2),
-        ("大二", "级数与常微分方程", "级数判别法清单", "lecture", "比较、比值、根值、交错级数和幂级数收敛半径。", "/practice?course=级数与常微分方程", 3),
-        ("大三", "复变函数", "解析函数入门", "lecture", "复数运算、柯西-黎曼方程、解析函数与积分初步。", "/practice?course=复变函数", 3),
-        ("大三", "数值分析", "误差与迭代方法", "practice", "训练舍入误差、二分法、牛顿法和线性方程组数值解法。", "/practice?course=数值分析", 3),
-        ("大四", "数学建模与综合专题", "建模问题拆解模板", "project", "从变量、目标函数、约束条件到模型检验的完整框架。", "/practice?course=数学建模与综合专题", 3),
-    ]
-    try:
-        with SessionLocal() as db:
-            resource_count = db.execute(text("SELECT COUNT(*) FROM learning_resources")).scalar_one()
-            if not resource_count:
-                for stage, course, title, resource_type, description, url, difficulty in resources:
-                    db.execute(
-                        text(
-                            """
-                            INSERT INTO learning_resources
-                              (stage, course, title, resource_type, description, url, difficulty)
-                            VALUES
-                              (:stage, :course, :title, :resource_type, :description, :url, :difficulty)
-                            """
-                        ),
-                        {
-                            "stage": stage,
-                            "course": course,
-                            "title": title,
-                            "resource_type": resource_type,
-                            "description": description,
-                            "url": url,
-                            "difficulty": difficulty,
-                        },
-                    )
-            db.commit()
-    except SQLAlchemyError as exc:
-        raise HTTPException(status_code=503, detail="侧边功能默认数据写入失败，请检查 MySQL。") from exc
-
-
 def _messages_sync(user_id: int) -> dict[str, Any]:
-    _ensure_side_feature_tables_sync()
     query = text(
         """
         SELECT id, type, title, content, is_read, created_at
@@ -1774,7 +1658,6 @@ def _messages_sync(user_id: int) -> dict[str, Any]:
 
 
 def _profile_summary_sync(user_id: int) -> dict[str, Any]:
-    _ensure_side_feature_tables_sync()
     with SessionLocal() as db:
         user_row = db.execute(
             text(
@@ -1832,7 +1715,6 @@ def _profile_summary_sync(user_id: int) -> dict[str, Any]:
 
 
 def _achievements_sync(user_id: int) -> dict[str, Any]:
-    _ensure_side_feature_tables_sync()
     records = _recent_records_sync(user_id, 300)
     answered = [record for record in records if record.get("is_correct") is not None]
     correct_count = sum(1 for record in answered if bool(record.get("is_correct")))
@@ -1857,7 +1739,6 @@ def _achievements_sync(user_id: int) -> dict[str, Any]:
 
 
 def _resources_sync(stage: str | None, course: str | None) -> dict[str, Any]:
-    _seed_side_feature_data_sync(1)
     filters = []
     params: dict[str, Any] = {"limit": 80}
     if stage:
@@ -1899,7 +1780,6 @@ def _resources_sync(stage: str | None, course: str | None) -> dict[str, Any]:
 
 
 def _notes_sync(user_id: int) -> dict[str, Any]:
-    _ensure_side_feature_tables_sync()
     query = text(
         """
         SELECT id, title, content, course, knowledge_tag, created_at, updated_at
@@ -2062,7 +1942,6 @@ def _remove_note_files(storage_keys: list[str]) -> None:
 
 
 def _create_note_sync(user_id: int, payload: NoteRequest) -> dict[str, Any]:
-    _ensure_side_feature_tables_sync()
     if not payload.content.strip() and not payload.attachment_ids:
         raise HTTPException(status_code=422, detail="请填写笔记内容或至少上传一个附件。")
     storage_keys: list[str] = []
@@ -2087,7 +1966,6 @@ def _create_note_sync(user_id: int, payload: NoteRequest) -> dict[str, Any]:
 
 
 def _update_note_sync(note_id: int, user_id: int, payload: NoteUpdateRequest) -> dict[str, Any]:
-    _ensure_side_feature_tables_sync()
     update_data = payload.model_dump(exclude_none=True)
     update_data["note_id"] = note_id
     update_data["user_id"] = user_id
@@ -2135,7 +2013,6 @@ def _update_note_sync(note_id: int, user_id: int, payload: NoteUpdateRequest) ->
 
 
 def _delete_note_sync(note_id: int, user_id: int) -> dict[str, Any]:
-    _ensure_side_feature_tables_sync()
     storage_keys: list[str] = []
     with SessionLocal() as db:
         attachment_rows = db.execute(

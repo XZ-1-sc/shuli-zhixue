@@ -6,10 +6,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /workspace/backend
 
-COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/requirements*.txt ./
+RUN pip install --no-cache-dir -r requirements.lock.txt
 
 COPY backend/app ./app
+COPY backend/alembic.ini ./alembic.ini
+COPY backend/migrations ./migrations
 COPY data /workspace/data
 
 EXPOSE 8000

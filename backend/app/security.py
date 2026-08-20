@@ -16,35 +16,7 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def ensure_auth_sessions_sync() -> None:
-    with SessionLocal() as db:
-        db.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS auth_sessions (
-                  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                  user_id BIGINT UNSIGNED NOT NULL,
-                  token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-                  expires_at DATETIME NOT NULL,
-                  last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                  revoked_at DATETIME NULL,
-                  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                  PRIMARY KEY (id),
-                  UNIQUE KEY uk_auth_sessions_token (token_hash),
-                  KEY idx_auth_sessions_user_active (user_id, revoked_at, expires_at),
-                  CONSTRAINT fk_auth_sessions_user
-                    FOREIGN KEY (user_id) REFERENCES users (id)
-                    ON DELETE CASCADE
-                    ON UPDATE CASCADE
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-                """
-            )
-        )
-        db.commit()
-
-
 def create_auth_session_sync(user_id: int, remember: bool = True) -> tuple[str, int]:
-    ensure_auth_sessions_sync()
     max_age = 30 * 24 * 60 * 60 if remember else 12 * 60 * 60
     token = secrets.token_urlsafe(48)
     expires_at = datetime.now() + timedelta(seconds=max_age)
@@ -75,7 +47,6 @@ def create_auth_session_sync(user_id: int, remember: bool = True) -> tuple[str, 
 def revoke_auth_session_sync(token: str | None) -> None:
     if not token:
         return
-    ensure_auth_sessions_sync()
     with SessionLocal() as db:
         db.execute(
             text("UPDATE auth_sessions SET revoked_at = NOW() WHERE token_hash = :token_hash AND revoked_at IS NULL"),
@@ -89,7 +60,6 @@ def current_session_user(request: Request) -> dict[str, Any]:
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录状态已失效，请重新登录。")
 
-    ensure_auth_sessions_sync()
     with SessionLocal() as db:
         row = db.execute(
             text(

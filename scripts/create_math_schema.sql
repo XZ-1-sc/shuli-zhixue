@@ -138,6 +138,24 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
+CREATE TABLE IF NOT EXISTS negotiation_log (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  conversation_id CHAR(36) NOT NULL,
+  user_id BIGINT UNSIGNED NOT NULL,
+  round_no TINYINT UNSIGNED NOT NULL,
+  speaker ENUM('diagnostician', 'strategist', 'orchestrator') NOT NULL,
+  message_type VARCHAR(64) NOT NULL,
+  content LONGTEXT NOT NULL,
+  needs_rediagnosis TINYINT(1) NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_negotiation_log_conversation (conversation_id, round_no),
+  KEY idx_negotiation_log_user_time (user_id, created_at),
+  KEY idx_negotiation_log_speaker_type (speaker, message_type),
+  CONSTRAINT fk_negotiation_log_user FOREIGN KEY (user_id) REFERENCES users (id)
+    ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
 CREATE TABLE IF NOT EXISTS user_goal_settings (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id BIGINT UNSIGNED NOT NULL,

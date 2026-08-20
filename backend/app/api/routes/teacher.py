@@ -34,68 +34,6 @@ class ClassMemberRequest(BaseModel):
     username: str = Field(min_length=2, max_length=64)
 
 
-def _ensure_teacher_tables_sync() -> None:
-    statements = [
-        """
-        CREATE TABLE IF NOT EXISTS classes (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          teacher_id BIGINT UNSIGNED NOT NULL,
-          name VARCHAR(100) NOT NULL,
-          stage VARCHAR(16) NOT NULL,
-          course VARCHAR(128) NOT NULL,
-          invite_code CHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-          status ENUM('active', 'archived') NOT NULL DEFAULT 'active',
-          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-          PRIMARY KEY (id),
-          UNIQUE KEY uk_classes_invite_code (invite_code),
-          UNIQUE KEY uk_classes_teacher_name (teacher_id, name),
-          KEY idx_classes_teacher_status (teacher_id, status),
-          CONSTRAINT fk_classes_teacher FOREIGN KEY (teacher_id) REFERENCES users (id)
-            ON DELETE CASCADE ON UPDATE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS class_members (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          class_id BIGINT UNSIGNED NOT NULL,
-          student_id BIGINT UNSIGNED NOT NULL,
-          status ENUM('active', 'removed') NOT NULL DEFAULT 'active',
-          joined_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          removed_at DATETIME NULL,
-          PRIMARY KEY (id),
-          UNIQUE KEY uk_class_members_class_student (class_id, student_id),
-          KEY idx_class_members_student_status (student_id, status),
-          KEY idx_class_members_class_status (class_id, status),
-          CONSTRAINT fk_class_members_class FOREIGN KEY (class_id) REFERENCES classes (id)
-            ON DELETE CASCADE ON UPDATE CASCADE,
-          CONSTRAINT fk_class_members_student FOREIGN KEY (student_id) REFERENCES users (id)
-            ON DELETE CASCADE ON UPDATE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS audit_logs (
-          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-          actor_user_id BIGINT UNSIGNED NOT NULL,
-          action VARCHAR(80) NOT NULL,
-          entity_type VARCHAR(48) NOT NULL,
-          entity_id BIGINT UNSIGNED NULL,
-          payload JSON NULL,
-          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          PRIMARY KEY (id),
-          KEY idx_audit_logs_actor_time (actor_user_id, created_at),
-          KEY idx_audit_logs_entity (entity_type, entity_id),
-          CONSTRAINT fk_audit_logs_actor FOREIGN KEY (actor_user_id) REFERENCES users (id)
-            ON DELETE CASCADE ON UPDATE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-        """,
-    ]
-    with SessionLocal() as db:
-        for statement in statements:
-            db.execute(text(statement))
-        db.commit()
-
-
 def _audit(db: Any, actor_id: int, action: str, entity_type: str, entity_id: int | None, payload: dict[str, Any]) -> None:
     db.execute(
         text(
@@ -175,14 +113,12 @@ def _class_rows(db: Any, teacher_id: int) -> list[dict[str, Any]]:
 
 
 def _classes_sync(teacher_id: int) -> dict[str, Any]:
-    _ensure_teacher_tables_sync()
     with SessionLocal() as db:
         items = _class_rows(db, teacher_id)
     return {"items": items, "total": len(items)}
 
 
 def _create_class_sync(teacher_id: int, payload: ClassCreateRequest) -> dict[str, Any]:
-    _ensure_teacher_tables_sync()
     try:
         with SessionLocal() as db:
             invite_code = _new_invite_code(db)
@@ -213,7 +149,6 @@ def _create_class_sync(teacher_id: int, payload: ClassCreateRequest) -> dict[str
 
 
 def _update_class_sync(teacher_id: int, class_id: int, payload: ClassUpdateRequest) -> dict[str, Any]:
-    _ensure_teacher_tables_sync()
     try:
         with SessionLocal() as db:
             _owned_class(db, teacher_id, class_id)
@@ -235,7 +170,6 @@ def _update_class_sync(teacher_id: int, class_id: int, payload: ClassUpdateReque
 
 
 def _regenerate_invite_sync(teacher_id: int, class_id: int) -> dict[str, Any]:
-    _ensure_teacher_tables_sync()
     with SessionLocal() as db:
         _owned_class(db, teacher_id, class_id)
         invite_code = _new_invite_code(db)
@@ -249,7 +183,6 @@ def _regenerate_invite_sync(teacher_id: int, class_id: int) -> dict[str, Any]:
 
 
 def _archive_class_sync(teacher_id: int, class_id: int) -> dict[str, bool]:
-    _ensure_teacher_tables_sync()
     with SessionLocal() as db:
         _owned_class(db, teacher_id, class_id)
         active_assignment = db.execute(
@@ -265,7 +198,6 @@ def _archive_class_sync(teacher_id: int, class_id: int) -> dict[str, bool]:
 
 
 def _class_detail_sync(teacher_id: int, class_id: int) -> dict[str, Any]:
-    _ensure_teacher_tables_sync()
     with SessionLocal() as db:
         class_row = _owned_class(db, teacher_id, class_id)
         rows = db.execute(
@@ -349,7 +281,6 @@ def _class_export_sync(teacher_id: int, class_id: int) -> tuple[str, bytes]:
 
 
 def _add_member_sync(teacher_id: int, class_id: int, payload: ClassMemberRequest) -> dict[str, Any]:
-    _ensure_teacher_tables_sync()
     username = payload.username.strip()
     with SessionLocal() as db:
         class_row = _owned_class(db, teacher_id, class_id)
@@ -405,7 +336,6 @@ def _add_member_sync(teacher_id: int, class_id: int, payload: ClassMemberRequest
 
 
 def _remove_member_sync(teacher_id: int, class_id: int, student_id: int) -> dict[str, Any]:
-    _ensure_teacher_tables_sync()
     with SessionLocal() as db:
         _owned_class(db, teacher_id, class_id)
         result = db.execute(
@@ -426,7 +356,6 @@ def _remove_member_sync(teacher_id: int, class_id: int, student_id: int) -> dict
 
 
 def _overview_sync(teacher_id: int) -> dict[str, Any]:
-    _ensure_teacher_tables_sync()
     with SessionLocal() as db:
         classes = _class_rows(db, teacher_id)
         totals = db.execute(

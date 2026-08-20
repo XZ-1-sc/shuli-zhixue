@@ -88,70 +88,7 @@ def _consume_teacher_invite_code(db: Any, submitted_code: str) -> int:
     return code_id
 
 
-def _ensure_auth_schema_sync() -> None:
-    with SessionLocal() as db:
-        role_column_exists = db.execute(
-            text(
-                """
-                SELECT COUNT(*)
-                FROM information_schema.COLUMNS
-                WHERE TABLE_SCHEMA = DATABASE()
-                  AND TABLE_NAME = 'users'
-                  AND COLUMN_NAME = 'role'
-                """
-            )
-        ).scalar_one()
-        if not role_column_exists:
-            db.execute(
-                text(
-                    """
-                    ALTER TABLE users
-                    ADD COLUMN role ENUM('student', 'teacher', 'admin')
-                    NOT NULL DEFAULT 'student' AFTER email
-                    """
-                )
-            )
-
-        role_index_exists = db.execute(
-            text(
-                """
-                SELECT COUNT(*)
-                FROM information_schema.STATISTICS
-                WHERE TABLE_SCHEMA = DATABASE()
-                  AND TABLE_NAME = 'users'
-                  AND INDEX_NAME = 'idx_users_role_status'
-                """
-            )
-        ).scalar_one()
-        if not role_index_exists:
-            db.execute(text("CREATE INDEX idx_users_role_status ON users (role, status)"))
-
-        db.execute(
-            text(
-                """
-                CREATE TABLE IF NOT EXISTS teacher_profiles (
-                  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                  user_id BIGINT UNSIGNED NOT NULL,
-                  display_name VARCHAR(64) NOT NULL,
-                  organization VARCHAR(160) NULL,
-                  verification_status ENUM('verified', 'disabled') NOT NULL DEFAULT 'verified',
-                  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                  PRIMARY KEY (id),
-                  UNIQUE KEY uk_teacher_profiles_user (user_id),
-                  CONSTRAINT fk_teacher_profiles_user
-                    FOREIGN KEY (user_id) REFERENCES users (id)
-                    ON DELETE CASCADE
-                    ON UPDATE CASCADE
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
-                """
-            )
-        )
-        db.commit()
-
-
 def _login_sync(payload: LoginRequest) -> LoginResponse:
-    _ensure_auth_schema_sync()
     username = payload.username.strip()
     query = text(
         """
@@ -189,7 +126,6 @@ def _login_sync(payload: LoginRequest) -> LoginResponse:
 
 
 def _register_sync(payload: RegisterRequest) -> LoginResponse:
-    _ensure_auth_schema_sync()
     username = payload.username.strip()
     if len(username) < 2:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="用户名至少需要 2 个字符。")

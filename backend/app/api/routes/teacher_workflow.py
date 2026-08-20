@@ -15,7 +15,7 @@ from ...database.session import SessionLocal
 from ...security import require_teacher
 from ...utils.question_document_parser import QuestionDocumentError, parse_question_document
 from .learning import _parse_json_list, _row_to_question, _score_subjective
-from .teacher import _audit, _ensure_teacher_tables_sync, _owned_class
+from .teacher import _audit, _owned_class
 
 
 router = APIRouter(prefix="/api/teacher", tags=["teacher-workflow"])
@@ -187,7 +187,6 @@ def _question_columns() -> str:
 
 
 def _student_list_sync(teacher_id: int, class_id: int | None, search: str | None) -> dict[str, Any]:
-    _ensure_teacher_tables_sync()
     clauses = ["c.teacher_id = :teacher_id", "c.status = 'active'", "cm.status = 'active'"]
     params: dict[str, Any] = {"teacher_id": teacher_id}
     if class_id:
