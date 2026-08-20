@@ -18,8 +18,26 @@ from ...security import current_session_user
 router = APIRouter(prefix="/api", tags=["answer-uploads"])
 
 MAX_FILES_PER_REQUEST = 5
+MAX_NOTE_FILES_PER_REQUEST = 10
+MAX_NOTE_FILE_BYTES = 20 * 1024 * 1024
+MAX_NOTE_TOTAL_BYTES = 60 * 1024 * 1024
 MAX_IMAGE_PIXELS = 25_000_000
 ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
+NOTE_FILE_TYPES = {
+    ".pdf": "application/pdf",
+    ".doc": "application/msword",
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xls": "application/vnd.ms-excel",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ".ppt": "application/vnd.ms-powerpoint",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".txt": "text/plain",
+    ".md": "text/markdown",
+    ".csv": "text/csv",
+}
+NOTE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+ZIP_OFFICE_EXTENSIONS = {".docx", ".xlsx", ".pptx"}
+LEGACY_OFFICE_EXTENSIONS = {".doc", ".xls", ".ppt"}
 
 
 def _upload_root() -> Path:
@@ -81,9 +99,10 @@ def _store_upload(
     mime_type: str,
     width: int,
     height: int,
+    folder: str = "answers",
 ) -> dict[str, Any]:
     now = datetime.now()
-    relative_dir = Path("answers") / f"{now:%Y}" / f"{now:%m}"
+    relative_dir = Path(folder) / f"{now:%Y}" / f"{now:%m}"
     filename = f"{uuid.uuid4().hex}{extension}"
     relative_path = relative_dir / filename
     absolute_path = _upload_root() / relative_path
@@ -132,6 +151,27 @@ def _store_upload(
         "height": height,
         "url": f"/api/files/{file_id}",
     }
+
+
+def _prepare_note_file(raw: bytes, original_name: str) -> tuple[bytes, str, str, int, int]:
+    safe_name = Path(original_name or "笔记附件").name
+    extension = Path(safe_name).suffix.lower()
+    if extension in NOTE_IMAGE_EXTENSIONS:
+        return _normalize_image(raw)
+    if extension not in NOTE_FILE_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail="仅支持图片、PDF、Word、Excel、PPT、TXT、Markdown 或 CSV 文件。",
+        )
+    if extension == ".pdf" and not raw.startswith(b"%PDF-"):
+        raise HTTPException(status_code=415, detail="PDF 文件无效或已损坏。")
+    if extension in ZIP_OFFICE_EXTENSIONS and not raw.startswith(b"PK"):
+        raise HTTPException(status_code=415, detail="Office 文件无效或已损坏。")
+    if extension in LEGACY_OFFICE_EXTENSIONS and not raw.startswith(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"):
+        raise HTTPException(status_code=415, detail="Office 文件无效或已损坏。")
+    if extension in {".txt", ".md", ".csv"} and b"\x00" in raw[:8192]:
+        raise HTTPException(status_code=415, detail="文本文件包含无效内容。")
+    return raw, extension, NOTE_FILE_TYPES[extension], 0, 0
 
 
 @router.post("/uploads/answer-images", status_code=status.HTTP_201_CREATED)
@@ -197,10 +237,56 @@ async def upload_question_images(
         uploaded.append(
             _store_upload(
                 user_id=int(current["id"]), original_name=original_name, normalized=normalized,
-                extension=extension, mime_type=mime_type, width=width, height=height,
+                extension=extension, mime_type=mime_type, width=width, height=height, folder="questions",
             )
         )
     return {"files": uploaded, "max_files": MAX_FILES_PER_REQUEST}
+
+
+@router.post("/uploads/note-files", status_code=status.HTTP_201_CREATED)
+async def upload_note_files(
+    user_id: int = Form(ge=1),
+    files: list[UploadFile] = File(...),
+    current: dict[str, Any] = Depends(current_session_user),
+) -> dict[str, Any]:
+    if int(current["id"]) != user_id:
+        raise HTTPException(status_code=403, detail="只能为当前登录账号上传笔记附件。")
+    if not _active_user_exists(user_id):
+        raise HTTPException(status_code=404, detail="账号不存在或已停用。")
+    if not files or len(files) > MAX_NOTE_FILES_PER_REQUEST:
+        raise HTTPException(status_code=422, detail=f"每次最多上传 {MAX_NOTE_FILES_PER_REQUEST} 个附件。")
+
+    prepared: list[tuple[str, bytes, str, str, int, int]] = []
+    total_bytes = 0
+    for file in files:
+        raw = await file.read(MAX_NOTE_FILE_BYTES + 1)
+        original_name = Path(file.filename or "笔记附件").name
+        await file.close()
+        if not raw:
+            raise HTTPException(status_code=422, detail="不能上传空文件。")
+        if len(raw) > MAX_NOTE_FILE_BYTES:
+            raise HTTPException(status_code=413, detail="单个笔记附件不能超过 20 MB。")
+        total_bytes += len(raw)
+        if total_bytes > MAX_NOTE_TOTAL_BYTES:
+            raise HTTPException(status_code=413, detail="单次上传的附件总大小不能超过 60 MB。")
+        normalized, extension, mime_type, width, height = _prepare_note_file(raw, original_name)
+        prepared.append((original_name, normalized, extension, mime_type, width, height))
+
+    uploaded: list[dict[str, Any]] = []
+    for original_name, normalized, extension, mime_type, width, height in prepared:
+        uploaded.append(
+            _store_upload(
+                user_id=user_id,
+                original_name=original_name,
+                normalized=normalized,
+                extension=extension,
+                mime_type=mime_type,
+                width=width,
+                height=height,
+                folder="notes",
+            )
+        )
+    return {"files": uploaded, "max_files": MAX_NOTE_FILES_PER_REQUEST}
 
 
 @router.get("/files/{file_id}")
@@ -212,7 +298,7 @@ async def read_uploaded_file(
         row = db.execute(
             text(
                 """
-                SELECT storage_key, mime_type, user_id
+                SELECT storage_key, original_name, mime_type, user_id
                 FROM uploaded_files
                 WHERE id = :file_id
                 LIMIT 1
@@ -221,7 +307,7 @@ async def read_uploaded_file(
             {"file_id": file_id},
         ).mappings().first()
     if not row:
-        raise HTTPException(status_code=404, detail="图片不存在。")
+        raise HTTPException(status_code=404, detail="文件不存在。")
     can_read = int(row["user_id"]) == int(current["id"])
     if not can_read and current["role"] in {"teacher", "admin"}:
         with SessionLocal() as db:
@@ -268,13 +354,21 @@ async def read_uploaded_file(
                 ).first()
             )
     if not can_read:
-        raise HTTPException(status_code=403, detail="你没有权限查看这张图片。")
+        raise HTTPException(status_code=403, detail="你没有权限查看这个文件。")
 
     root = _upload_root()
     path = (root / str(row["storage_key"])).resolve()
     if root not in path.parents or not path.is_file():
-        raise HTTPException(status_code=404, detail="图片文件不存在。")
-    return FileResponse(path, media_type=str(row["mime_type"]), headers={"Cache-Control": "private, max-age=3600"})
+        raise HTTPException(status_code=404, detail="文件不存在。")
+    mime_type = str(row["mime_type"])
+    disposition = "inline" if mime_type.startswith("image/") or mime_type == "application/pdf" else "attachment"
+    return FileResponse(
+        path,
+        media_type=mime_type,
+        filename=str(row["original_name"]),
+        content_disposition_type=disposition,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @router.delete("/uploads/{file_id}")
@@ -291,14 +385,16 @@ async def delete_unlinked_upload(
                 FROM uploaded_files AS uf
                 LEFT JOIN answer_attachments AS aa ON aa.uploaded_file_id = uf.id
                 LEFT JOIN question_attachments AS qa ON qa.uploaded_file_id = uf.id
-                WHERE uf.id = :file_id AND uf.user_id = :user_id AND aa.id IS NULL AND qa.id IS NULL
+                LEFT JOIN note_attachments AS na ON na.uploaded_file_id = uf.id
+                WHERE uf.id = :file_id AND uf.user_id = :user_id
+                  AND aa.id IS NULL AND qa.id IS NULL AND na.id IS NULL
                 LIMIT 1
                 """
             ),
             {"file_id": file_id, "user_id": user_id},
         ).mappings().first()
         if not row:
-            raise HTTPException(status_code=409, detail="图片不存在，或已绑定到答题记录。")
+            raise HTTPException(status_code=409, detail="文件不存在，或已绑定到内容记录。")
         db.execute(text("DELETE FROM uploaded_files WHERE id = :file_id"), {"file_id": file_id})
         db.commit()
 

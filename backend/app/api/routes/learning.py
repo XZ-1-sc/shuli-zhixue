@@ -114,17 +114,19 @@ class GoalRequest(BaseModel):
 class NoteRequest(BaseModel):
     user_id: int = Field(ge=1)
     title: str = Field(min_length=1, max_length=160)
-    content: str = Field(min_length=1, max_length=6000)
+    content: str = Field(default="", max_length=6000)
     course: str | None = Field(default=None, max_length=128)
     knowledge_tag: str | None = Field(default=None, max_length=160)
+    attachment_ids: list[int] = Field(default_factory=list, max_length=10)
 
 
 class NoteUpdateRequest(BaseModel):
     user_id: int = Field(ge=1)
     title: str | None = Field(default=None, min_length=1, max_length=160)
-    content: str | None = Field(default=None, min_length=1, max_length=6000)
+    content: str | None = Field(default=None, max_length=6000)
     course: str | None = Field(default=None, max_length=128)
     knowledge_tag: str | None = Field(default=None, max_length=160)
+    attachment_ids: list[int] | None = Field(default=None, max_length=10)
 
 
 class AnswerSubmissionRequest(BaseModel):
@@ -1670,6 +1672,24 @@ def _ensure_side_feature_tables_sync() -> None:
           KEY idx_learning_resources_type (resource_type)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
         """,
+        """
+        CREATE TABLE IF NOT EXISTS note_attachments (
+          id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          note_id BIGINT UNSIGNED NOT NULL,
+          uploaded_file_id BIGINT UNSIGNED NOT NULL,
+          sort_order TINYINT UNSIGNED NOT NULL DEFAULT 1,
+          created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          UNIQUE KEY uk_note_attachments_file (uploaded_file_id),
+          KEY idx_note_attachments_note (note_id, sort_order),
+          CONSTRAINT fk_note_attachments_note
+            FOREIGN KEY (note_id) REFERENCES user_notes (id)
+            ON DELETE CASCADE ON UPDATE CASCADE,
+          CONSTRAINT fk_note_attachments_file
+            FOREIGN KEY (uploaded_file_id) REFERENCES uploaded_files (id)
+            ON DELETE CASCADE ON UPDATE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci
+        """,
     ]
     try:
         with SessionLocal() as db:
@@ -1887,6 +1907,40 @@ def _notes_sync(user_id: int) -> dict[str, Any]:
     )
     with SessionLocal() as db:
         rows = db.execute(query, {"user_id": user_id}).mappings().all()
+        note_ids = [int(row["id"]) for row in rows]
+        attachment_rows = []
+        if note_ids:
+            placeholders = ", ".join(f":note_{index}" for index in range(len(note_ids)))
+            params = {f"note_{index}": note_id for index, note_id in enumerate(note_ids)}
+            attachment_rows = db.execute(
+                text(
+                    f"""
+                    SELECT na.note_id, uf.id, uf.original_name, uf.mime_type, uf.size_bytes,
+                           uf.width, uf.height, na.sort_order
+                    FROM note_attachments AS na
+                    JOIN uploaded_files AS uf ON uf.id = na.uploaded_file_id
+                    WHERE na.note_id IN ({placeholders})
+                    ORDER BY na.note_id, na.sort_order, na.id
+                    """
+                ),
+                params,
+            ).mappings().all()
+    attachments_by_note: dict[int, list[dict[str, Any]]] = {note_id: [] for note_id in note_ids}
+    for attachment in attachment_rows:
+        file_id = int(attachment["id"])
+        mime_type = str(attachment["mime_type"])
+        attachments_by_note[int(attachment["note_id"])].append(
+            {
+                "id": file_id,
+                "name": str(attachment["original_name"]),
+                "mime_type": mime_type,
+                "size_bytes": int(attachment["size_bytes"] or 0),
+                "width": int(attachment["width"] or 0),
+                "height": int(attachment["height"] or 0),
+                "is_image": mime_type.startswith("image/"),
+                "url": f"/api/files/{file_id}",
+            }
+        )
     return {
         "user_id": user_id,
         "items": [
@@ -1896,6 +1950,7 @@ def _notes_sync(user_id: int) -> dict[str, Any]:
                 "content": row["content"],
                 "course": row["course"],
                 "knowledge_tag": row["knowledge_tag"],
+                "attachments": attachments_by_note.get(int(row["id"]), []),
                 "created_at": _json_safe(row["created_at"]),
                 "updated_at": _json_safe(row["updated_at"]),
             }
@@ -1904,8 +1959,109 @@ def _notes_sync(user_id: int) -> dict[str, Any]:
     }
 
 
+def _validate_note_attachment_ids(
+    db: Any,
+    user_id: int,
+    attachment_ids: list[int],
+    note_id: int | None = None,
+) -> list[int]:
+    unique_ids = list(dict.fromkeys(int(file_id) for file_id in attachment_ids))
+    if len(unique_ids) != len(attachment_ids) or len(unique_ids) > 10:
+        raise HTTPException(status_code=422, detail="笔记附件不能重复，且最多保留 10 个。")
+    if not unique_ids:
+        return []
+    placeholders = ", ".join(f":file_{index}" for index in range(len(unique_ids)))
+    params: dict[str, Any] = {f"file_{index}": file_id for index, file_id in enumerate(unique_ids)}
+    params.update({"user_id": user_id, "note_id": note_id or 0})
+    rows = db.execute(
+        text(
+            f"""
+            SELECT uf.id
+            FROM uploaded_files AS uf
+            LEFT JOIN answer_attachments AS aa ON aa.uploaded_file_id = uf.id
+            LEFT JOIN question_attachments AS qa ON qa.uploaded_file_id = uf.id
+            LEFT JOIN note_attachments AS na ON na.uploaded_file_id = uf.id
+            WHERE uf.id IN ({placeholders}) AND uf.user_id = :user_id
+              AND aa.id IS NULL AND qa.id IS NULL
+              AND (na.id IS NULL OR na.note_id = :note_id)
+            """
+        ),
+        params,
+    ).scalars().all()
+    if {int(file_id) for file_id in rows} != set(unique_ids):
+        raise HTTPException(status_code=422, detail="部分附件不存在、已被使用，或不属于当前账号。")
+    return unique_ids
+
+
+def _sync_note_attachments(
+    db: Any,
+    note_id: int,
+    user_id: int,
+    attachment_ids: list[int],
+) -> list[str]:
+    requested = _validate_note_attachment_ids(db, user_id, attachment_ids, note_id)
+    existing_rows = db.execute(
+        text(
+            """
+            SELECT na.uploaded_file_id, uf.storage_key
+            FROM note_attachments AS na
+            JOIN uploaded_files AS uf ON uf.id = na.uploaded_file_id
+            WHERE na.note_id = :note_id
+            """
+        ),
+        {"note_id": note_id},
+    ).mappings().all()
+    existing = {int(row["uploaded_file_id"]): str(row["storage_key"]) for row in existing_rows}
+    removed_ids = set(existing) - set(requested)
+    removed_keys = [existing[file_id] for file_id in removed_ids]
+
+    for file_id in removed_ids:
+        db.execute(
+            text("DELETE FROM note_attachments WHERE note_id = :note_id AND uploaded_file_id = :file_id"),
+            {"note_id": note_id, "file_id": file_id},
+        )
+        db.execute(text("DELETE FROM uploaded_files WHERE id = :file_id"), {"file_id": file_id})
+    for sort_order, file_id in enumerate(requested, start=1):
+        if file_id in existing:
+            db.execute(
+                text(
+                    """
+                    UPDATE note_attachments SET sort_order = :sort_order
+                    WHERE note_id = :note_id AND uploaded_file_id = :file_id
+                    """
+                ),
+                {"note_id": note_id, "file_id": file_id, "sort_order": sort_order},
+            )
+        else:
+            db.execute(
+                text(
+                    """
+                    INSERT INTO note_attachments (note_id, uploaded_file_id, sort_order)
+                    VALUES (:note_id, :file_id, :sort_order)
+                    """
+                ),
+                {"note_id": note_id, "file_id": file_id, "sort_order": sort_order},
+            )
+    return removed_keys
+
+
+def _remove_note_files(storage_keys: list[str]) -> None:
+    if not storage_keys:
+        return
+    from .uploads import _upload_root
+
+    root = _upload_root()
+    for storage_key in storage_keys:
+        path = (root / storage_key).resolve()
+        if root in path.parents:
+            path.unlink(missing_ok=True)
+
+
 def _create_note_sync(payload: NoteRequest) -> dict[str, Any]:
     _ensure_side_feature_tables_sync()
+    if not payload.content.strip() and not payload.attachment_ids:
+        raise HTTPException(status_code=422, detail="请填写笔记内容或至少上传一个附件。")
+    storage_keys: list[str] = []
     with SessionLocal() as db:
         if not _get_user_exists(db, payload.user_id):
             raise HTTPException(status_code=404, detail="用户不存在，请先登录。")
@@ -1916,10 +2072,12 @@ def _create_note_sync(payload: NoteRequest) -> dict[str, Any]:
                 VALUES (:user_id, :title, :content, :course, :knowledge_tag)
                 """
             ),
-            payload.model_dump(),
+            payload.model_dump(exclude={"attachment_ids"}),
         )
-        db.commit()
         note_id = int(result.lastrowid)
+        storage_keys = _sync_note_attachments(db, note_id, payload.user_id, payload.attachment_ids)
+        db.commit()
+    _remove_note_files(storage_keys)
     notes = _notes_sync(payload.user_id)["items"]
     return next(item for item in notes if item["id"] == note_id)
 
@@ -1929,37 +2087,75 @@ def _update_note_sync(note_id: int, payload: NoteUpdateRequest) -> dict[str, Any
     update_data = payload.model_dump(exclude_none=True)
     update_data["note_id"] = note_id
     fields = [key for key in ("title", "content", "course", "knowledge_tag") if key in update_data]
-    if not fields:
+    has_attachment_update = payload.attachment_ids is not None
+    if not fields and not has_attachment_update:
         raise HTTPException(status_code=400, detail="没有可更新的笔记内容。")
-    assignments = ", ".join(f"{field} = :{field}" for field in fields)
+    storage_keys: list[str] = []
     with SessionLocal() as db:
-        result = db.execute(
-            text(
-                f"""
-                UPDATE user_notes
-                SET {assignments}, updated_at = CURRENT_TIMESTAMP
-                WHERE id = :note_id AND user_id = :user_id
-                """
-            ),
-            update_data,
-        )
-        db.commit()
-        if result.rowcount == 0:
+        current_note = db.execute(
+            text("SELECT content FROM user_notes WHERE id = :note_id AND user_id = :user_id LIMIT 1"),
+            {"note_id": note_id, "user_id": payload.user_id},
+        ).mappings().first()
+        if not current_note:
             raise HTTPException(status_code=404, detail="没有找到这条笔记。")
+        existing_ids = [
+            int(file_id)
+            for file_id in db.execute(
+                text("SELECT uploaded_file_id FROM note_attachments WHERE note_id = :note_id ORDER BY sort_order, id"),
+                {"note_id": note_id},
+            ).scalars().all()
+        ]
+        next_content = payload.content if payload.content is not None else str(current_note["content"] or "")
+        next_attachments = payload.attachment_ids if payload.attachment_ids is not None else existing_ids
+        if not next_content.strip() and not next_attachments:
+            raise HTTPException(status_code=422, detail="请填写笔记内容或至少保留一个附件。")
+        if fields:
+            assignments = ", ".join(f"{field} = :{field}" for field in fields)
+            db.execute(
+                text(
+                    f"""
+                    UPDATE user_notes
+                    SET {assignments}, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = :note_id AND user_id = :user_id
+                    """
+                ),
+                update_data,
+            )
+        if has_attachment_update:
+            storage_keys = _sync_note_attachments(db, note_id, payload.user_id, payload.attachment_ids or [])
+        db.commit()
+    _remove_note_files(storage_keys)
     notes = _notes_sync(payload.user_id)["items"]
     return next(item for item in notes if item["id"] == note_id)
 
 
 def _delete_note_sync(note_id: int, user_id: int) -> dict[str, Any]:
     _ensure_side_feature_tables_sync()
+    storage_keys: list[str] = []
     with SessionLocal() as db:
+        attachment_rows = db.execute(
+            text(
+                """
+                SELECT uf.id, uf.storage_key
+                FROM note_attachments AS na
+                JOIN uploaded_files AS uf ON uf.id = na.uploaded_file_id
+                JOIN user_notes AS un ON un.id = na.note_id
+                WHERE na.note_id = :note_id AND un.user_id = :user_id
+                """
+            ),
+            {"note_id": note_id, "user_id": user_id},
+        ).mappings().all()
         result = db.execute(
             text("DELETE FROM user_notes WHERE id = :note_id AND user_id = :user_id"),
             {"note_id": note_id, "user_id": user_id},
         )
-        db.commit()
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="没有找到这条笔记。")
+        for row in attachment_rows:
+            db.execute(text("DELETE FROM uploaded_files WHERE id = :file_id"), {"file_id": int(row["id"])})
+            storage_keys.append(str(row["storage_key"]))
+        db.commit()
+    _remove_note_files(storage_keys)
     return {"deleted": True, "id": note_id}
 
 
@@ -2233,22 +2429,44 @@ async def resources(
 
 
 @router.get("/notes")
-async def notes(user_id: int = Query(default=1, ge=1)) -> dict[str, Any]:
+async def notes(
+    user_id: int = Query(default=1, ge=1),
+    current: dict[str, Any] = Depends(current_session_user),
+) -> dict[str, Any]:
+    if int(current["id"]) != user_id:
+        raise HTTPException(status_code=403, detail="只能查看当前账号的笔记。")
     return await asyncio.to_thread(_notes_sync, user_id)
 
 
 @router.post("/notes", status_code=status.HTTP_201_CREATED)
-async def create_note(payload: NoteRequest) -> dict[str, Any]:
+async def create_note(
+    payload: NoteRequest,
+    current: dict[str, Any] = Depends(current_session_user),
+) -> dict[str, Any]:
+    if int(current["id"]) != payload.user_id:
+        raise HTTPException(status_code=403, detail="只能为当前账号创建笔记。")
     return await asyncio.to_thread(_create_note_sync, payload)
 
 
 @router.put("/notes/{note_id}")
-async def update_note(note_id: int, payload: NoteUpdateRequest) -> dict[str, Any]:
+async def update_note(
+    note_id: int,
+    payload: NoteUpdateRequest,
+    current: dict[str, Any] = Depends(current_session_user),
+) -> dict[str, Any]:
+    if int(current["id"]) != payload.user_id:
+        raise HTTPException(status_code=403, detail="只能修改当前账号的笔记。")
     return await asyncio.to_thread(_update_note_sync, note_id, payload)
 
 
 @router.delete("/notes/{note_id}")
-async def delete_note(note_id: int, user_id: int = Query(ge=1)) -> dict[str, Any]:
+async def delete_note(
+    note_id: int,
+    user_id: int = Query(ge=1),
+    current: dict[str, Any] = Depends(current_session_user),
+) -> dict[str, Any]:
+    if int(current["id"]) != user_id:
+        raise HTTPException(status_code=403, detail="只能删除当前账号的笔记。")
     return await asyncio.to_thread(_delete_note_sync, note_id, user_id)
 
 

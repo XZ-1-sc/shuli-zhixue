@@ -148,22 +148,70 @@
           <input v-model="noteForm.title" placeholder="标题，例如：极限错因整理" required />
           <input v-model="noteForm.course" placeholder="课程，可选" />
           <input v-model="noteForm.knowledge_tag" placeholder="知识点，可选" />
-          <textarea v-model="noteForm.content" rows="8" placeholder="写下定义、错因、证明思路或下一次复习提醒" required></textarea>
-          <div class="note-actions">
-            <button type="submit">{{ editingNoteId ? "保存修改" : "新增笔记" }}</button>
-            <button v-if="editingNoteId" type="button" @click="resetNoteForm">取消编辑</button>
+          <textarea v-model="noteForm.content" rows="8" placeholder="写下定义、错因、证明思路或下一次复习提醒（上传附件后可不填）"></textarea>
+          <section
+            class="note-upload-zone"
+            :class="{ 'is-dragging': noteDragging }"
+            @dragenter.prevent="noteDragging = true"
+            @dragover.prevent
+            @dragleave.prevent="noteDragging = false"
+            @drop.prevent="handleNoteDrop"
+          >
+            <div>
+              <strong>文件与图片</strong>
+              <small>拖到这里，或选择图片、PDF、Word、Excel、PPT、TXT、Markdown、CSV；单次总计不超过 60 MB</small>
+            </div>
+            <button :disabled="uploadingNoteFiles || noteAttachments.length >= 10" type="button" @click="noteFileInput?.click()">
+              {{ uploadingNoteFiles ? "上传中..." : "选择附件" }}
+            </button>
+            <input
+              ref="noteFileInput"
+              hidden
+              multiple
+              type="file"
+              accept="image/jpeg,image/png,image/webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.csv"
+              @change="handleNoteFilePick"
+            />
+          </section>
+          <div v-if="noteAttachments.length" class="note-attachment-editor-list">
+            <article v-for="file in noteAttachments" :key="file.id">
+              <img v-if="isImageFile(file)" :src="file.url" :alt="file.name" />
+              <span v-else class="note-file-symbol">{{ fileTypeSymbol(file) }}</span>
+              <div>
+                <strong :title="file.name">{{ file.name }}</strong>
+                <small>{{ fileTypeLabel(file) }} · {{ formatFileSize(file.size_bytes) }}</small>
+              </div>
+              <a :href="file.url" target="_blank" rel="noopener" title="查看附件">查看</a>
+              <button type="button" title="移除附件" @click="removeNoteAttachment(file)">×</button>
+            </article>
           </div>
+          <p v-if="noteUploadError" class="note-form-error" role="alert">{{ noteUploadError }}</p>
+          <div class="note-actions">
+            <button :disabled="uploadingNoteFiles || !canSaveNote" type="submit">{{ editingNoteId ? "保存修改" : "新增笔记" }}</button>
+            <button v-if="editingNoteId" type="button" @click="cancelNoteEdit">取消编辑</button>
+          </div>
+          <p v-if="noteSaveError" class="note-form-error" role="alert">{{ noteSaveError }}</p>
         </form>
         <div class="note-list">
           <div v-if="!notes.length" class="glass-panel feature-empty">
             <strong>还没有笔记</strong>
-            <p>可以先记录一个定义、错因或证明思路，后续复盘会更省力。</p>
+            <p>可以记录定义、错因和证明思路，也可以直接上传课堂讲义、手写笔记或习题文件。</p>
           </div>
           <article v-for="note in notes" :key="note.id" class="glass-panel note-card">
             <small>{{ note.course || "未分类" }} · {{ note.knowledge_tag || "自由笔记" }}</small>
             <h2>{{ note.title }}</h2>
-            <p>{{ note.content }}</p>
-            <div>
+            <p v-if="note.content">{{ note.content }}</p>
+            <div v-if="note.attachments?.length" class="note-card-attachments">
+              <a v-for="file in note.attachments" :key="file.id" :href="file.url" target="_blank" rel="noopener">
+                <img v-if="isImageFile(file)" :src="file.url" :alt="file.name" />
+                <span v-else>{{ fileTypeSymbol(file) }}</span>
+                <div>
+                  <strong :title="file.name">{{ file.name }}</strong>
+                  <small>{{ formatFileSize(file.size_bytes) }}</small>
+                </div>
+              </a>
+            </div>
+            <div class="note-card-actions">
               <button type="button" @click="editNote(note)">编辑</button>
               <button type="button" @click="removeNote(note.id)">删除</button>
             </div>
@@ -204,7 +252,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 
 import UserAccountButton from "../components/UserAccountButton.vue";
-import { apiDelete, apiGet, apiPost, apiPut } from "../api/client";
+import { apiDelete, apiGet, apiPost, apiPut, apiUpload } from "../api/client";
 import { useUserStore } from "../stores/user";
 
 const emit = defineEmits(["open-auth"]);
@@ -274,12 +322,20 @@ const achievements = ref([]);
 const resources = ref([]);
 const notes = ref([]);
 const editingNoteId = ref(null);
+const noteAttachments = ref([]);
+const draftAttachmentIds = ref([]);
+const noteFileInput = ref(null);
+const uploadingNoteFiles = ref(false);
+const noteDragging = ref(false);
+const noteUploadError = ref("");
+const noteSaveError = ref("");
 const settingsSaved = ref(false);
 
 const stageOptions = ["大一", "大二", "大三", "大四"];
 const resourceFilter = reactive({ stage: "", course: "" });
 const noteForm = reactive({ title: "", content: "", course: "", knowledge_tag: "" });
 const settings = reactive({ target_stage: "大一", target_course: "高等数学上", weekly_hours: 8, exam_date: "" });
+const canSaveNote = computed(() => Boolean(noteForm.title.trim() && (noteForm.content.trim() || noteAttachments.value.length)));
 
 function formatTime(value) {
   if (!value) {
@@ -311,6 +367,31 @@ function badgeProgress(badge) {
     return badge.unlocked ? 100 : 0;
   }
   return Math.max(0, Math.min(100, Math.round((Number(badge.progress || 0) / Number(badge.target)) * 100)));
+}
+
+function isImageFile(file) {
+  return Boolean(file?.is_image || String(file?.mime_type || "").startsWith("image/"));
+}
+
+function formatFileSize(value) {
+  const bytes = Number(value || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function fileTypeLabel(file) {
+  const name = String(file?.name || "").toLowerCase();
+  if (isImageFile(file)) return "图片";
+  if (name.endsWith(".pdf")) return "PDF";
+  if (/\.(doc|docx)$/.test(name)) return "Word";
+  if (/\.(xls|xlsx|csv)$/.test(name)) return "表格";
+  if (/\.(ppt|pptx)$/.test(name)) return "演示文稿";
+  return "文本文档";
+}
+
+function fileTypeSymbol(file) {
+  return { PDF: "PDF", Word: "W", 表格: "X", 演示文稿: "P", 文本文档: "TXT" }[fileTypeLabel(file)] || "FILE";
 }
 
 async function loadMessages() {
@@ -368,13 +449,32 @@ async function loadPage() {
   }
 }
 
-function resetNoteForm() {
+function clearNoteForm() {
   editingNoteId.value = null;
+  noteAttachments.value = [];
+  draftAttachmentIds.value = [];
+  noteUploadError.value = "";
+  noteSaveError.value = "";
   Object.assign(noteForm, { title: "", content: "", course: "", knowledge_tag: "" });
 }
 
-function editNote(note) {
+async function cleanupDraftAttachments() {
+  const ids = [...draftAttachmentIds.value];
+  draftAttachmentIds.value = [];
+  await Promise.allSettled(ids.map((fileId) => apiDelete(`/api/uploads/${fileId}`)));
+}
+
+async function cancelNoteEdit() {
+  await cleanupDraftAttachments();
+  clearNoteForm();
+}
+
+async function editNote(note) {
+  await cleanupDraftAttachments();
   editingNoteId.value = note.id;
+  noteAttachments.value = [...(note.attachments || [])];
+  noteUploadError.value = "";
+  noteSaveError.value = "";
   Object.assign(noteForm, {
     title: note.title,
     content: note.content,
@@ -383,27 +483,97 @@ function editNote(note) {
   });
 }
 
+async function uploadNoteFiles(fileList) {
+  const files = [...(fileList || [])];
+  noteUploadError.value = "";
+  if (!files.length) return;
+  if (noteAttachments.value.length + files.length > 10) {
+    noteUploadError.value = "每条笔记最多保留 10 个附件。";
+    return;
+  }
+  if (files.some((file) => file.size > 20 * 1024 * 1024)) {
+    noteUploadError.value = "单个附件不能超过 20 MB。";
+    return;
+  }
+  if (files.reduce((total, file) => total + file.size, 0) > 60 * 1024 * 1024) {
+    noteUploadError.value = "单次上传的附件总大小不能超过 60 MB。";
+    return;
+  }
+  uploadingNoteFiles.value = true;
+  try {
+    const formData = new FormData();
+    formData.append("user_id", user.userId);
+    files.forEach((file) => formData.append("files", file));
+    const data = await apiUpload("/api/uploads/note-files", formData);
+    const uploaded = (data.files || []).map((file) => ({
+      ...file,
+      is_image: String(file.mime_type || "").startsWith("image/")
+    }));
+    noteAttachments.value.push(...uploaded);
+    draftAttachmentIds.value.push(...uploaded.map((file) => file.id));
+  } catch (uploadError) {
+    noteUploadError.value = uploadError.message || "附件上传失败。";
+  } finally {
+    uploadingNoteFiles.value = false;
+  }
+}
+
+async function handleNoteFilePick(event) {
+  await uploadNoteFiles(event.target.files);
+  event.target.value = "";
+}
+
+async function handleNoteDrop(event) {
+  noteDragging.value = false;
+  await uploadNoteFiles(event.dataTransfer?.files);
+}
+
+async function removeNoteAttachment(file) {
+  noteUploadError.value = "";
+  if (draftAttachmentIds.value.includes(file.id)) {
+    try {
+      await apiDelete(`/api/uploads/${file.id}`);
+      draftAttachmentIds.value = draftAttachmentIds.value.filter((fileId) => fileId !== file.id);
+    } catch (removeError) {
+      noteUploadError.value = removeError.message || "附件移除失败。";
+      return;
+    }
+  }
+  noteAttachments.value = noteAttachments.value.filter((item) => item.id !== file.id);
+}
+
 async function saveNote() {
+  noteSaveError.value = "";
+  if (!canSaveNote.value) {
+    noteSaveError.value = "请填写标题，并输入内容或上传至少一个附件。";
+    return;
+  }
   const payload = {
     user_id: user.userId,
     title: noteForm.title.trim(),
     content: noteForm.content.trim(),
     course: noteForm.course.trim() || null,
-    knowledge_tag: noteForm.knowledge_tag.trim() || null
+    knowledge_tag: noteForm.knowledge_tag.trim() || null,
+    attachment_ids: noteAttachments.value.map((file) => file.id)
   };
-  if (editingNoteId.value) {
-    await apiPut(`/api/notes/${editingNoteId.value}`, payload);
-  } else {
-    await apiPost("/api/notes", payload);
+  try {
+    if (editingNoteId.value) {
+      await apiPut(`/api/notes/${editingNoteId.value}`, payload);
+    } else {
+      await apiPost("/api/notes", payload);
+    }
+    draftAttachmentIds.value = [];
+    clearNoteForm();
+    await loadNotes();
+  } catch (saveError) {
+    noteSaveError.value = saveError.message || "笔记保存失败。";
   }
-  resetNoteForm();
-  await loadNotes();
 }
 
 async function removeNote(noteId) {
   await apiDelete(`/api/notes/${noteId}`, { user_id: user.userId });
   if (editingNoteId.value === noteId) {
-    resetNoteForm();
+    clearNoteForm();
   }
   await loadNotes();
 }

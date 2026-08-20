@@ -2792,6 +2792,138 @@
   resize: vertical;
 }
 
+.note-upload-zone {
+  min-height: 104px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px dashed rgba(91, 218, 235, 0.36);
+  border-radius: 8px;
+  background: rgba(68, 193, 212, 0.045);
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.note-upload-zone.is-dragging {
+  border-color: #65dbe9;
+  background: rgba(68, 193, 212, 0.12);
+  transform: translateY(-2px);
+}
+
+.note-upload-zone > div {
+  display: grid;
+  gap: 5px;
+}
+
+.note-upload-zone strong {
+  color: #e8f8fa;
+  font-size: 15px;
+}
+
+.note-upload-zone small {
+  color: #88a7ad;
+  font-weight: 500;
+  line-height: 1.55;
+}
+
+.note-upload-zone button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(91, 218, 235, 0.4);
+  border-radius: 8px;
+  color: #07171d;
+  background: #64d7e7;
+  font-weight: 900;
+}
+
+.note-upload-zone button:disabled,
+.note-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  transform: none;
+}
+
+.note-attachment-editor-list {
+  display: grid;
+  gap: 8px;
+}
+
+.note-attachment-editor-list article {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) auto 32px;
+  align-items: center;
+  gap: 11px;
+  padding: 9px;
+  border: 1px solid rgba(191, 220, 226, 0.13);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.note-attachment-editor-list img,
+.note-file-symbol {
+  width: 46px;
+  height: 46px;
+  border-radius: 6px;
+}
+
+.note-attachment-editor-list img {
+  object-fit: cover;
+  background: #112731;
+}
+
+.note-file-symbol {
+  display: grid;
+  place-items: center;
+  color: #07171d;
+  background: #efb95f;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.note-attachment-editor-list article > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.note-attachment-editor-list article > div strong,
+.note-card-attachments a strong {
+  overflow: hidden;
+  color: #e7f5f7;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-attachment-editor-list article > div small,
+.note-card-attachments a small {
+  color: #7f9ca2;
+  font-weight: 500;
+}
+
+.note-attachment-editor-list a {
+  color: #65dbe9;
+  font-weight: 800;
+}
+
+.note-attachment-editor-list article > button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid rgba(235, 113, 105, 0.3);
+  border-radius: 6px;
+  color: #f38b84;
+  background: rgba(235, 113, 105, 0.07);
+  font-size: 18px;
+}
+
+.note-form-error {
+  margin: 0;
+  color: #ff9b91;
+  font-weight: 600;
+}
+
 .note-actions {
   display: flex;
   gap: 10px;
@@ -2807,10 +2939,65 @@
   white-space: pre-wrap;
 }
 
-.note-card div {
+.note-card-actions {
   display: flex;
   gap: 10px;
   margin-top: 18px;
+}
+
+.note-card-attachments {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.note-card-attachments > a {
+  min-width: 0;
+  min-height: 62px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  border: 1px solid rgba(191, 220, 226, 0.13);
+  border-radius: 7px;
+  color: #d9edef;
+  background: rgba(255, 255, 255, 0.035);
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.note-card-attachments > a:hover {
+  transform: translateY(-2px);
+  border-color: rgba(91, 218, 235, 0.36);
+  background: rgba(91, 218, 235, 0.07);
+}
+
+.note-card-attachments img,
+.note-card-attachments > a > span {
+  width: 42px;
+  height: 42px;
+  border-radius: 6px;
+}
+
+.note-card-attachments img {
+  object-fit: cover;
+  background: #10232c;
+}
+
+.note-card-attachments > a > span {
+  display: grid;
+  place-items: center;
+  color: #08171d;
+  background: #efb95f;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.note-card-attachments a > div {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
 }
 
 .feature-skeleton {
@@ -3152,6 +3339,127 @@
 }
 
 @media (max-width: 720px) {
+  .ref-topbar {
+    position: sticky;
+    top: 0;
+    z-index: 80;
+    grid-template-columns: minmax(0, 1fr) auto;
+    min-height: 64px;
+    padding: 0 12px;
+  }
+
+  .ref-brand {
+    min-width: 0;
+    height: 64px;
+    gap: 9px;
+    padding: 0;
+    font-size: 20px;
+  }
+
+  .shield-mark {
+    width: 34px;
+    height: 40px;
+    font-size: 17px;
+  }
+
+  .ref-topnav,
+  .ref-actions > .ghost-action {
+    display: none;
+  }
+
+  .ref-actions {
+    min-width: 0;
+    gap: 0;
+    padding: 0;
+  }
+
+  .account-trigger {
+    min-width: 0;
+    max-width: 132px;
+    min-height: 40px;
+    padding: 0 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ref-main {
+    padding: 12px;
+  }
+
+  .feature-hero {
+    min-height: 0;
+    padding: 22px 20px;
+  }
+
+  .feature-hero h1 {
+    font-size: 32px;
+    line-height: 1.16;
+  }
+
+  .message-card,
+  .resource-card,
+  .badge-card,
+  .profile-card,
+  .note-card,
+  .feature-empty,
+  .resource-filter,
+  .note-editor,
+  .settings-form {
+    padding: 18px;
+  }
+
+  .assistant-orb {
+    top: auto;
+    right: 12px;
+    bottom: 14px;
+    width: 52px;
+    height: 52px;
+    grid-template-rows: 1fr;
+    gap: 0;
+    padding: 5px;
+    border-radius: 18px;
+    transform: none;
+  }
+
+  .assistant-orb:hover {
+    transform: translateY(-2px);
+  }
+
+  .assistant-orb-face {
+    width: 38px;
+    height: 28px;
+  }
+
+  .assistant-orb > span:not(.assistant-orb-face) {
+    display: none;
+  }
+
+  .note-upload-zone {
+    grid-template-columns: 1fr;
+  }
+
+  .note-upload-zone button {
+    width: 100%;
+  }
+
+  .note-attachment-editor-list article {
+    grid-template-columns: 46px minmax(0, 1fr) 32px;
+  }
+
+  .note-attachment-editor-list article > button {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
+  .note-attachment-editor-list article > a {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+
+  .note-card-attachments {
+    grid-template-columns: 1fr;
+  }
+
   .practice-ref-top {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;

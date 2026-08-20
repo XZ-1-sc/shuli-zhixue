@@ -355,3 +355,18 @@
   - `scripts/test_teacher_browser.py` 已覆盖题库导入弹窗和组卷上传试卷弹窗。
 - 运行环境：`pypdf`、`xlrd` 已加入后端依赖；Nginx `client_max_body_size` 已调整为 20 MB；GitHub Actions 会运行离线文件解析回归。
 - 验证结果：Python 编译、依赖检查、Vue 构建、Compose 配置、Excel/API 回归、PDF 回归、Edge 桌面与移动端检查均通过。
+
+## 2026-08-20 进度补充：笔记本文件与图片附件
+
+- 笔记本编辑器新增点击选择和拖拽上传，可同时保存文字、图片和学习文件。
+- 支持格式：JPEG、PNG、WebP、PDF、Word、Excel、PPT、TXT、Markdown、CSV；单个附件最大 20 MB、单次上传最大 60 MB，每条笔记最多 10 个附件。
+- 新增 `POST /api/uploads/note-files`，上传过程校验账号归属、文件扩展名、图片内容和 PDF/Office 文件签名。
+- 新增 `note_attachments`，附件与用户笔记真实绑定；增量迁移为 `scripts/migrate_note_attachments.sql`。
+- 笔记列表返回附件名称、类型、大小与受控访问地址；图片显示缩略图，文档支持查看或下载。
+- 编辑笔记可增加或移除附件，删除笔记会同步删除数据库文件记录和 Docker 上传卷中的实体文件。
+- 笔记接口增加当前 HttpOnly 会话账号校验，不能通过修改 `user_id` 读取或改写其他账号笔记。
+- 已执行数据库增量迁移；使用“树虫”账号完成图片和 Markdown 上传、纯附件笔记创建、附件移除、列表读取与整条删除回归，清理结果正常。
+- 修复侧边功能页在 430px 手机宽度下顶部导航竖排重叠的问题；手机端采用精简顶栏，小逻缩为不遮挡表单的紧凑入口。
+- 已验证 `python -m compileall -q backend scripts`、`python -m pip check`、`npm.cmd run build` 和 `docker compose config --quiet` 通过。
+- Docker backend/gateway 已重建并运行；经 Nginx 网关完成图片与 CSV 上传、笔记保存、受控下载和删除清理回归。
+- 真实 Edge 已完成桌面/430px 移动端布局检查，以及文件选择、上传、保存、笔记卡片展示和删除全过程；无横向溢出或严重控制台错误。

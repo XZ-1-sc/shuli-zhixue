@@ -60,6 +60,7 @@ async def offline_docs() -> HTMLResponse:
         ("GET", "/api/practice/random", "随机抽题"),
         ("POST", "/api/practice/submit", "提交答案并返回解析"),
         ("POST", "/api/uploads/answer-images", "上传作答图片"),
+        ("POST", "/api/uploads/note-files", "上传笔记图片或文件"),
         ("POST", "/api/assessment/start", "开始或继续基础首测"),
         ("GET", "/api/diagnose?user_id=1", "学习诊断"),
         ("GET", "/api/recommend?user_id=1", "今日练习推荐"),
