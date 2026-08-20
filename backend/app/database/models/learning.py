@@ -117,3 +117,21 @@ class NegotiationLog(IdMixin, CreatedAtMixin, Base):
     message_type: Mapped[str] = mapped_column(String(64), nullable=False)
     content: Mapped[str] = mapped_column(LONGTEXT, nullable=False)
     needs_rediagnosis: Mapped[int] = mapped_column(TINYINT(1), nullable=False, server_default=text("0"))
+
+
+class LLMCallLog(IdMixin, CreatedAtMixin, Base):
+    __tablename__ = "llm_call_log"
+    __table_args__ = (
+        Index("idx_llm_call_log_conversation", "conversation_id", "created_at"),
+        Index("idx_llm_call_log_agent_time", "agent_name", "created_at"),
+    )
+
+    conversation_id: Mapped[str | None] = mapped_column(CHAR(36))
+    agent_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(INTEGER(unsigned=True), nullable=False, server_default=text("0"))
+    completion_tokens: Mapped[int] = mapped_column(INTEGER(unsigned=True), nullable=False, server_default=text("0"))
+    total_tokens: Mapped[int] = mapped_column(INTEGER(unsigned=True), nullable=False, server_default=text("0"))
+    latency_ms: Mapped[int] = mapped_column(INTEGER(unsigned=True), nullable=False, server_default=text("0"))
+    error_message: Mapped[str | None] = mapped_column(Text)

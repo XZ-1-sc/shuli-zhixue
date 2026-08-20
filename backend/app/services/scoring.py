@@ -1,4 +1,3 @@
-import math
 import re
 from typing import Any
 
@@ -66,4 +65,3 @@ def _score_subjective(
     length_bonus = min(len(answer_text) / 180, 0.25)
     score = max(30.0, min(100.0, (ratio * 90) + (length_bonus * 100)))
     return score >= 60, round(score, 2)
-

@@ -6,65 +6,53 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from .agents.diagnostician import diagnose
+from .agents.schemas import ClarityReview, Diagnosis
 from .agents.strategist import plan
 from .database.session import SessionLocal
-from .utils.llm_client import call_llm
+from .utils.llm_client import call_llm_json
 
 
 MAX_NEGOTIATION_ROUNDS = 3
 
 STRATEGY_REVIEW_SYSTEM_PROMPT = """
-你是大学数学学习系统里的策略审查员。
-你需要判断诊断体给出的薄弱点是否足够清晰，能否直接转成一周学习计划。
-合格标准：
-1. 说明阶段，例如大一/大二/大三/大四。
-2. 说明课程，例如高等数学上、线性代数上、概率论与数理统计。
-3. 说明具体知识点。
-4. 说明薄弱原因，例如概念混淆、计算失误、证明思路断点、做题慢。
-
-如果不够清晰，只输出：
-NEED_REDIAGNOSIS
-问题：...
-补充要求：...
-
-如果足够清晰，只输出：
-CLEAR
-理由：...
+你是大学数学学习系统里的策略审查员。请检查结构化诊断能否直接转为学习计划。
+每个薄弱点都必须包含阶段、课程、具体知识点、原因类型和可执行建议。
+如果学生没有记录且 needs_first_test=true，应视为信息明确，不要重复要求诊断。
 """.strip()
 
 
-def _format_records(user_records: Any) -> str:
-    if isinstance(user_records, str):
-        return user_records.strip()
-    if not user_records:
-        return "暂无做题记录。"
-    try:
-        return json.dumps(user_records, ensure_ascii=False, indent=2)
-    except TypeError:
-        return str(user_records)
+def _fallback_review(diagnosis: Diagnosis) -> ClarityReview:
+    if diagnosis.needs_first_test:
+        return ClarityReview(clear=True, feedback="学生需要先完成首测，当前诊断已足够明确。")
+    missing = []
+    if not diagnosis.weak_points:
+        missing.append("weak_points")
+    for index, point in enumerate(diagnosis.weak_points, start=1):
+        for field in ("stage", "course", "knowledge", "reason_type", "suggestion"):
+            if not getattr(point, field, None):
+                missing.append(f"weak_points[{index}].{field}")
+    return ClarityReview(
+        clear=not missing,
+        missing=missing,
+        feedback="诊断字段完整，可以生成学习计划。" if not missing else "请补全缺失字段后重新诊断。",
+    )
 
 
-def _review_diagnosis_with_strategist(diagnosis_text: str) -> str:
+def _review_diagnosis(diagnosis: Diagnosis, conversation_id: str) -> ClarityReview:
     messages = [
         {"role": "system", "content": STRATEGY_REVIEW_SYSTEM_PROMPT},
-        {"role": "user", "content": f"请审查以下诊断结果：\n{diagnosis_text}"},
+        {"role": "user", "content": json.dumps(diagnosis.model_dump(), ensure_ascii=False, indent=2)},
     ]
-    return call_llm(messages, temperature=0.2, max_tokens=512)
-
-
-def _needs_rediagnosis(review_text: str) -> bool:
-    normalized = review_text.upper()
-    return "NEED_REDIAGNOSIS" in normalized
-
-
-def _build_rediagnosis_input(user_records: Any, previous_diagnosis: str, strategist_feedback: str) -> str:
-    return (
-        "策略审查员认为上一版诊断不够清晰，请重新分析。\n\n"
-        f"审查反馈：\n{strategist_feedback}\n\n"
-        f"上一版诊断：\n{previous_diagnosis}\n\n"
-        f"原始做题记录：\n{_format_records(user_records)}\n\n"
-        "重新输出时，每个薄弱点必须同时说明阶段、课程、知识点和薄弱原因。"
+    review, _ = call_llm_json(
+        messages,
+        ClarityReview,
+        fallback=_fallback_review(diagnosis),
+        conversation_id=conversation_id,
+        agent_name="clarity_reviewer",
+        temperature=0.1,
+        max_tokens=500,
     )
+    return review
 
 
 def _save_log(
@@ -77,20 +65,18 @@ def _save_log(
     content: str,
     needs_rediagnosis: bool = False,
 ) -> bool:
-    query = text(
-        """
-        INSERT INTO negotiation_log (
-          conversation_id, user_id, round_no, speaker, message_type, content, needs_rediagnosis
-        )
-        VALUES (
-          :conversation_id, :user_id, :round_no, :speaker, :message_type, :content, :needs_rediagnosis
-        )
-        """
-    )
     try:
         with SessionLocal() as db:
             db.execute(
-                query,
+                text(
+                    """
+                    INSERT INTO negotiation_log (
+                      conversation_id, user_id, round_no, speaker, message_type, content, needs_rediagnosis
+                    ) VALUES (
+                      :conversation_id, :user_id, :round_no, :speaker, :message_type, :content, :needs_rediagnosis
+                    )
+                    """
+                ),
                 {
                     "conversation_id": conversation_id,
                     "user_id": user_id,
@@ -132,7 +118,6 @@ def _append_log(
             "round_no": round_no,
             "speaker": speaker,
             "message_type": message_type,
-            "content": content,
             "needs_rediagnosis": needs_rediagnosis,
             "saved": saved,
         }
@@ -142,7 +127,8 @@ def _append_log(
 def negotiate_strategy(user_id: int, user_records: Any, max_rounds: int = MAX_NEGOTIATION_ROUNDS) -> dict[str, Any]:
     conversation_id = str(uuid4())
     logs: list[dict[str, Any]] = []
-    diagnosis_text = diagnose(user_records)
+    max_rounds = max(1, min(MAX_NEGOTIATION_ROUNDS, max_rounds))
+    diagnosis = diagnose(user_records, conversation_id=conversation_id)
     _append_log(
         logs,
         user_id=user_id,
@@ -150,14 +136,16 @@ def negotiate_strategy(user_id: int, user_records: Any, max_rounds: int = MAX_NE
         round_no=1,
         speaker="diagnostician",
         message_type="diagnosis",
-        content=diagnosis_text,
+        content=diagnosis.model_dump_json(),
     )
 
     rounds_used = 1
+    rediagnosed = False
+    final_review = _fallback_review(diagnosis)
     for round_no in range(1, max_rounds + 1):
         rounds_used = round_no
-        review_text = _review_diagnosis_with_strategist(diagnosis_text)
-        needs_rediagnosis = _needs_rediagnosis(review_text)
+        final_review = _review_diagnosis(diagnosis, conversation_id)
+        needs_rediagnosis = not final_review.clear
         _append_log(
             logs,
             user_id=user_id,
@@ -165,14 +153,14 @@ def negotiate_strategy(user_id: int, user_records: Any, max_rounds: int = MAX_NE
             round_no=round_no,
             speaker="strategist",
             message_type="clarity_review",
-            content=review_text,
+            content=final_review.model_dump_json(),
             needs_rediagnosis=needs_rediagnosis,
         )
-        if not needs_rediagnosis:
+        if final_review.clear or round_no >= max_rounds:
             break
-        if round_no >= max_rounds:
-            break
-        diagnosis_text = diagnose(_build_rediagnosis_input(user_records, diagnosis_text, review_text))
+        feedback = json.dumps(final_review.model_dump(), ensure_ascii=False)
+        diagnosis = diagnose(user_records, conversation_id=conversation_id, feedback=feedback)
+        rediagnosed = True
         _append_log(
             logs,
             user_id=user_id,
@@ -180,10 +168,10 @@ def negotiate_strategy(user_id: int, user_records: Any, max_rounds: int = MAX_NE
             round_no=round_no + 1,
             speaker="diagnostician",
             message_type="rediagnosis",
-            content=diagnosis_text,
+            content=diagnosis.model_dump_json(),
         )
 
-    strategy_text = plan(diagnosis_text)
+    weekly_plan = plan(diagnosis, conversation_id=conversation_id)
     _append_log(
         logs,
         user_id=user_id,
@@ -191,13 +179,15 @@ def negotiate_strategy(user_id: int, user_records: Any, max_rounds: int = MAX_NE
         round_no=rounds_used,
         speaker="strategist",
         message_type="final_strategy",
-        content=strategy_text,
+        content=weekly_plan.model_dump_json(),
     )
     return {
         "conversation_id": conversation_id,
-        "diagnosis": diagnosis_text,
-        "strategy": strategy_text,
+        "diagnosis": diagnosis,
+        "strategy": weekly_plan,
+        "review": final_review,
         "rounds_used": rounds_used,
+        "rediagnosed": rediagnosed,
         "log_count": len(logs),
         "saved_log_count": sum(1 for item in logs if item["saved"]),
     }

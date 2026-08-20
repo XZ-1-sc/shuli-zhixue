@@ -1,17 +1,15 @@
-import json
 from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from ..session import SessionLocal
 from ...api.teacher_schemas import AssignmentWriteRequest, ReviewRequest
 from ...api.routes.teacher import _audit, _owned_class
 from ...api.utils import _parse_json_list
 from .teacher_common import _iso
-from .teacher_questions import _question_attachments, _question_columns, _question_dict
+from .teacher_questions import _question_columns, _question_dict
 
 
 def _owned_assignment(db: Any, teacher_id: int, assignment_id: int) -> dict[str, Any]:

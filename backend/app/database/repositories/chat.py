@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from ..session import SessionLocal
 from ...api.utils import _json_safe

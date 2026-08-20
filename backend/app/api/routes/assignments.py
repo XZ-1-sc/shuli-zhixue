@@ -3,11 +3,11 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from ...agents.evaluator import evaluate
 from ...database.session import SessionLocal
 from ...database.repositories.questions import _get_question_sync, _validate_attachment_ids
 from ...security import require_student
@@ -395,7 +395,10 @@ def _submit_sync(user_id: int, assignment_id: int) -> dict[str, Any]:
         db.execute(text("UPDATE assignment_attempts SET status=:status,submitted_at=NOW(),total_score=:score,graded_at=CASE WHEN :status='graded' THEN NOW() ELSE NULL END WHERE id=:id"), {"status": next_status, "score": total_score, "id": attempt["id"]})
         db.execute(text("INSERT INTO user_notifications (user_id,type,title,content,action_url) VALUES (:teacher,'assignment','学生已提交作业',:content,:url)"), {"teacher": assignment["teacher_id"], "content": f"学生已提交《{assignment['title']}》，待批改 {pending} 题。", "url": f"/teacher/assignments/{assignment_id}"})
         db.commit()
-    return _detail_sync(user_id, assignment_id)
+        evaluation_task_id = f"assignment-{attempt['id']}"
+    data = _detail_sync(user_id, assignment_id)
+    data["evaluation"] = evaluate(user_id, evaluation_task_id).model_dump()
+    return data
 
 
 @router.get("")

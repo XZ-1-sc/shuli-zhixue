@@ -11,6 +11,7 @@ from ...database.repositories.diagnosis import (
     _study_roadmap_sync,
     _wrong_questions_sync,
 )
+from ...orchestrator import run_pipeline
 from ...security import require_student_user
 from ..schemas import GoalRequest
 
@@ -20,7 +21,36 @@ router = APIRouter(prefix="/api", tags=["diagnosis"])
 
 @router.get("/diagnose")
 async def diagnose_user(current: dict[str, Any] = Depends(require_student_user)) -> dict[str, Any]:
-    return await asyncio.to_thread(_diagnose_sync, int(current["id"]))
+    user_id = int(current["id"])
+    local_diagnosis = await asyncio.to_thread(_diagnose_sync, user_id)
+    pipeline = await run_pipeline(user_id)
+    local_points = {
+        (str(item.get("stage")), str(item.get("course")), str(item.get("knowledge_tag"))): item
+        for item in local_diagnosis.get("weak_points") or []
+    }
+    structured_points = []
+    for point in pipeline["diagnosis"]["weak_points"]:
+        local = local_points.get((point["stage"], point["course"], point["knowledge"]), {})
+        structured_points.append(
+            {
+                **point,
+                "knowledge_tag": point["knowledge"],
+                "fine_tag": local.get("fine_tag") or point["knowledge"],
+                "reason": point["reason_type"],
+                "score": local.get("score"),
+                "total": local.get("total", 0),
+                "avg_time_seconds": local.get("avg_time_seconds", 0),
+            }
+        )
+    return {
+        **local_diagnosis,
+        "weak_points": structured_points,
+        "confidence": pipeline["diagnosis"]["confidence"],
+        "needs_first_test": pipeline["diagnosis"]["needs_first_test"],
+        "strategy": pipeline["strategy"],
+        "recommended_question_ids": pipeline["recommended_question_ids"],
+        "negotiation": pipeline["negotiation"],
+    }
 
 
 @router.get("/recommend")

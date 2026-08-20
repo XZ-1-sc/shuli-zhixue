@@ -6,6 +6,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from ..session import SessionLocal
+from ...agents.evaluator import evaluate
 from ...api.schemas import AnswerSubmissionRequest
 from ...services.scoring import _score_subjective
 from .assessment import _assessment_after_submit_sync, _validate_assessment_question
@@ -134,5 +135,5 @@ def _submit_answer_sync(user_id: int, payload: AnswerSubmissionRequest) -> dict[
     if payload.practice_mode == "assessment":
         assessment_state = _assessment_after_submit_sync(user_id, payload.task_id)
         response.update(assessment_state)
+    response["evaluation"] = evaluate(user_id, payload.task_id).model_dump()
     return response
-

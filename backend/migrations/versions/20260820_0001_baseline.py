@@ -18,8 +18,10 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    Base.metadata.create_all(bind=op.get_bind(), checkfirst=not op.get_context().as_sql)
+    tables = [table for table in Base.metadata.sorted_tables if table.name != "llm_call_log"]
+    Base.metadata.create_all(bind=op.get_bind(), tables=tables, checkfirst=not op.get_context().as_sql)
 
 
 def downgrade() -> None:
-    Base.metadata.drop_all(bind=op.get_bind(), checkfirst=not op.get_context().as_sql)
+    tables = [table for table in Base.metadata.sorted_tables if table.name != "llm_call_log"]
+    Base.metadata.drop_all(bind=op.get_bind(), tables=tables, checkfirst=not op.get_context().as_sql)

@@ -1,4 +1,4 @@
-import json
+import math
 from datetime import date
 from typing import Any
 
@@ -8,9 +8,10 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from ..session import SessionLocal
 from ...api.schemas import GoalRequest
-from ...api.utils import _display_knowledge_name, _json_safe, _parse_json_list, _parse_json_object
+from ...api.utils import _json_safe, _parse_json_list, _parse_json_object
 from .common import _get_user_exists
-from .questions import _random_questions_sync
+from .questions import _question_select_sql, _random_questions_sync, _row_to_question
+from .stages import _stages_sync
 
 
 def _recent_records_sync(user_id: int, limit: int = 50) -> list[dict[str, Any]]:
@@ -342,4 +343,3 @@ def _save_goal_sync(user_id: int, payload: GoalRequest) -> dict[str, Any]:
     except SQLAlchemyError as exc:
         raise HTTPException(status_code=503, detail="学习目标保存失败，请检查数据库连接。") from exc
     return _get_goal_sync(user_id)
-

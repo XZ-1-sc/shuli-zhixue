@@ -3,8 +3,8 @@ from typing import Any
 from sqlalchemy import text
 
 from ..session import SessionLocal
+from ...api.routes.teacher import _owned_class
 from ...api.teacher_schemas import TYPE_LABELS
-from ...api.utils import _parse_json_list
 from .teacher_common import _iso, _managed_student
 
 

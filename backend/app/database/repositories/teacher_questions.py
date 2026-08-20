@@ -1,16 +1,13 @@
-import json
 import uuid
 from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import text
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from ..session import SessionLocal
 from ...api.teacher_schemas import TYPE_LABELS, QuestionImportCommitRequest, QuestionWriteRequest
-from ...api.utils import _parse_json_list, _row_to_question
-from ...services.scoring import _score_subjective
+from ...api.utils import _parse_json_list
 from ...api.routes.teacher import _audit
 from .teacher_common import _iso, _json
 

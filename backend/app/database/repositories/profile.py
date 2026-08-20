@@ -7,6 +7,7 @@ from ..session import SessionLocal
 from ...api.schemas import NoteRequest, NoteUpdateRequest
 from ...api.utils import _json_safe
 from .common import _get_user_exists
+from .diagnosis import _diagnose_sync, _get_goal_sync, _recent_records_sync
 
 
 def _messages_sync(user_id: int) -> dict[str, Any]:
@@ -407,4 +408,3 @@ def _delete_note_sync(note_id: int, user_id: int) -> dict[str, Any]:
         db.commit()
     _remove_note_files(storage_keys)
     return {"deleted": True, "id": note_id}
-

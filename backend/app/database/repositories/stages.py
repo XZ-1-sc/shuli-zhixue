@@ -3,7 +3,7 @@ from typing import Any
 from sqlalchemy import text
 
 from ..session import SessionLocal
-from ...api.utils import _display_knowledge_name, _is_unmapped_english_label, _mastery_status
+from ...api.utils import TYPE_LABELS, _display_knowledge_name, _is_unmapped_english_label, _mastery_status
 
 
 def _stages_sync() -> list[dict[str, Any]]:
@@ -246,4 +246,3 @@ def _question_type_counts_sync() -> dict[str, Any]:
         for row in rows
     ]
     return {"types": TYPE_LABELS, "counts": counts}
-

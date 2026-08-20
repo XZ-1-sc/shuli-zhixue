@@ -9,7 +9,7 @@ from .content import (
     QuestionAttachment,
     SourceAttribution,
 )
-from .learning import ChatMessage, LearningPlan, NegotiationLog, PracticeRecord, UserGoalSetting
+from .learning import ChatMessage, LearningPlan, LLMCallLog, NegotiationLog, PracticeRecord, UserGoalSetting
 from .side import LearningResource, NoteAttachment, UserNote, UserNotification
 from .teaching import Assignment, AssignmentAnswer, AssignmentAttempt, AssignmentQuestion, Class, ClassMember
 from .user import AuditLog, AuthSession, TeacherInviteCode, TeacherProfile, User
@@ -32,6 +32,7 @@ __all__ = [
     "KnowledgeNode",
     "LearningPlan",
     "LearningResource",
+    "LLMCallLog",
     "MathCourse",
     "MathStage",
     "MistakeTag",

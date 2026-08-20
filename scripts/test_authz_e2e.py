@@ -45,6 +45,14 @@ def cleanup_users(user_ids: list[int]) -> None:
     placeholders = ", ".join(f":user_{index}" for index in range(len(user_ids)))
     params = {f"user_{index}": user_id for index, user_id in enumerate(user_ids)}
     with SessionLocal() as db:
+        db.execute(
+            text(
+                f"DELETE calls FROM llm_call_log AS calls "
+                f"JOIN negotiation_log AS logs ON logs.conversation_id=calls.conversation_id "
+                f"WHERE logs.user_id IN ({placeholders})"
+            ),
+            params,
+        )
         db.execute(text(f"DELETE FROM users WHERE id IN ({placeholders})"), params)
         db.commit()
 
