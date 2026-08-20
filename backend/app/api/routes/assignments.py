@@ -9,15 +9,10 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from ...database.session import SessionLocal
+from ...database.repositories.questions import _get_question_sync, _validate_attachment_ids
 from ...security import require_student
-from .learning import (
-    _get_question_sync,
-    _parse_json_list,
-    _question_select_sql,
-    _row_to_question,
-    _score_subjective,
-    _validate_attachment_ids,
-)
+from ...services.scoring import _score_subjective
+from ..utils import _parse_json_list, _question_select_sql, _row_to_question
 
 
 router = APIRouter(prefix="/api/assignments", tags=["student-assignments"])

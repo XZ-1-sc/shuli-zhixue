@@ -3,10 +3,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 
 from .api.routes.auth import router as auth_router
+from .api.routes.assessment import router as assessment_router
 from .api.routes.assignments import router as assignments_router
-from .api.routes.learning import router as learning_router
+from .api.routes.chat import router as chat_router
+from .api.routes.diagnosis import router as diagnosis_router
+from .api.routes.health import router as health_router
+from .api.routes.practice import router as practice_router
+from .api.routes.profile import router as profile_router
+from .api.routes.stages import router as stages_router
 from .api.routes.teacher import router as teacher_router
-from .api.routes.teacher_workflow import router as teacher_workflow_router
+from .api.routes.teacher_assignments import router as teacher_assignments_router
+from .api.routes.teacher_questions import router as teacher_questions_router
+from .api.routes.teacher_review import router as teacher_review_router
+from .api.routes.teacher_students import router as teacher_students_router
 from .api.routes.uploads import router as uploads_router
 
 
@@ -35,10 +44,19 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
-app.include_router(learning_router)
+app.include_router(health_router)
+app.include_router(stages_router)
+app.include_router(practice_router)
+app.include_router(assessment_router)
+app.include_router(diagnosis_router)
+app.include_router(profile_router)
+app.include_router(chat_router)
 app.include_router(uploads_router)
 app.include_router(teacher_router)
-app.include_router(teacher_workflow_router)
+app.include_router(teacher_students_router)
+app.include_router(teacher_questions_router)
+app.include_router(teacher_assignments_router)
+app.include_router(teacher_review_router)
 app.include_router(assignments_router)
 
 

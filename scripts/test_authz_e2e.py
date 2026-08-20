@@ -6,7 +6,7 @@ import httpx
 from fastapi import HTTPException
 from sqlalchemy import text
 
-from backend.app.api.routes.learning import _chat_rate_events, _enforce_chat_rate_limit
+from backend.app.database.repositories.chat import _chat_rate_events, _enforce_chat_rate_limit
 from backend.app.database.session import SessionLocal, settings
 
 
