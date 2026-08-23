@@ -188,3 +188,5 @@ async function submit() {
   }
 }
 </script>
+
+<style scoped src="../auth.css"></style>

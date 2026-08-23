@@ -1,63 +1,22 @@
 <template>
-  <section class="ref-shell home-ref">
-    <header class="ref-topbar">
-      <RouterLink class="ref-brand" to="/">
-        <span class="shield-mark">Σ</span>
-        <strong>数理智学</strong>
-      </RouterLink>
-
-      <nav class="ref-topnav" aria-label="主导航">
-        <RouterLink v-for="item in topNav" :key="item.to" :to="item.to">
-          <span>{{ item.icon }}</span>
-          {{ item.label }}
-        </RouterLink>
-      </nav>
-
-      <div class="ref-actions">
-        <label class="stage-picker">
-          <small>当前阶段</small>
-          <select v-model="goal.target_stage" @change="syncCourseToStage">
-            <option value="大一">大一 · 上学期</option>
-            <option value="大二">大二 · 下学期</option>
-            <option value="大三">大三 · 专业课</option>
-            <option value="大四">大四 · 综合应用</option>
-          </select>
-        </label>
-        <button class="round-icon" type="button">⌁</button>
-        <UserAccountButton />
-      </div>
-    </header>
-
-    <aside class="ref-sidebar">
-      <nav class="side-menu" aria-label="学习菜单">
-        <RouterLink to="/">
-          <span>⌂</span>
-          学习中控台
-        </RouterLink>
-        <RouterLink to="/messages"><span>✉</span>消息中心</RouterLink>
-        <RouterLink to="/profile"><span>▤</span>学习档案</RouterLink>
-        <RouterLink to="/achievements"><span>♕</span>成就徽章</RouterLink>
-        <RouterLink to="/resources"><span>▣</span>资源中心</RouterLink>
-        <RouterLink to="/notebook"><span>▥</span>笔记本</RouterLink>
-        <RouterLink to="/assignments"><span>▧</span>我的作业</RouterLink>
-        <RouterLink to="/settings"><span>⚙</span>设置中心</RouterLink>
-      </nav>
-
-      <div class="first-test-card">
-        <span class="lamp-icon">☼</span>
-        <strong>开始首测</strong>
-        <p>智能评估你的数学基础水平</p>
-        <RouterLink to="/practice?mode=assessment&limit=12">开始首测 ›</RouterLink>
-      </div>
-    </aside>
-
-    <main class="ref-main">
+  <section class="student-page home-ref">
+    <div class="dashboard-page-controls">
+      <label class="stage-picker">
+        <small>当前阶段</small>
+        <select v-model="goal.target_stage" @change="syncCourseToStage">
+          <option value="大一">大一 · 上学期</option>
+          <option value="大二">大二 · 下学期</option>
+          <option value="大三">大三 · 专业课</option>
+          <option value="大四">大四 · 综合应用</option>
+        </select>
+      </label>
+    </div>
       <section class="welcome-strip">
         <div>
           <h1>大学数学学习中控台</h1>
           <p>晚上好，同学！今天是持续进步的一天。</p>
         </div>
-        <blockquote>数学是打开科学大门的钥匙。<br />—— 伽利略</blockquote>
+        <blockquote>数学是打开科学大门的钥匙。<br />伽利略</blockquote>
       </section>
 
       <section class="home-board">
@@ -114,21 +73,22 @@
             <span>▣ 2024-05-18（周六）</span>
           </div>
           <div class="daily-list">
-            <button
-              v-if="displayTasks.length"
-              v-for="(task, index) in displayTasks"
-              :key="`${task.title}-${index}`"
-              type="button"
-              @click="startTask(task)"
-            >
-              <i :class="`tone-${index % 5}`">{{ task.icon }}</i>
-              <span>
-                <strong>{{ task.title }}</strong>
-                <small>章节练习 · {{ task.question_count }} 题</small>
-              </span>
-              <em>{{ task.status }}</em>
-              <b>›</b>
-            </button>
+            <template v-if="displayTasks.length">
+              <button
+                v-for="(task, index) in displayTasks"
+                :key="`${task.title}-${index}`"
+                type="button"
+                @click="startTask(task)"
+              >
+                <i :class="`tone-${index % 5}`">{{ task.icon }}</i>
+                <span>
+                  <strong>{{ task.title }}</strong>
+                  <small>章节练习 · {{ task.question_count }} 题</small>
+                </span>
+                <em>{{ task.status }}</em>
+                <b>›</b>
+              </button>
+            </template>
             <div v-else class="home-empty-state">
               <strong>今日练习还没生成</strong>
               <p>先做一组首测题，系统会根据正确率和耗时生成今天的练习任务。</p>
@@ -166,7 +126,6 @@
           </article>
         </div>
       </section>
-    </main>
   </section>
 </template>
 
@@ -175,7 +134,6 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 
 import RadarChart from "../components/RadarChart.vue";
-import UserAccountButton from "../components/UserAccountButton.vue";
 import { apiGet, apiPost } from "../api/client";
 import { useUserStore } from "../stores/user";
 
@@ -193,14 +151,6 @@ const goal = reactive({
   exam_date: ""
 });
 
-const topNav = [
-  { to: "/", label: "首页", icon: "⌂" },
-  { to: "/roadmap", label: "学习规划", icon: "▤" },
-  { to: "/practice", label: "做题训练", icon: "▧" },
-  { to: "/knowledge", label: "知识图谱", icon: "⬡" },
-  { to: "/review", label: "错题复盘", icon: "▣" }
-  ,{ to: "/assignments", label: "我的作业", icon: "▧" }
-];
 
 const fallbackTasks = [
   { title: "极限的概念与运算法则", course: "高等数学上", knowledge_tag: "极限与连续", question_count: 15, status: "未开始", icon: "▱" },
@@ -326,3 +276,5 @@ async function load() {
 onMounted(load);
 watch(() => user.userId, load);
 </script>
+
+<style scoped src="../styles/views/dashboard.css"></style>

@@ -1,10 +1,6 @@
 <template>
   <section class="practice-ref-page" :class="{ 'is-assessment': isAssessment }">
-    <header class="practice-ref-top">
-      <RouterLink class="practice-logo" to="/">
-        <span>Σ</span>
-        数理智学
-      </RouterLink>
+    <section class="practice-toolbar" aria-label="练习控制栏">
       <div class="practice-title-block">
         <strong>{{ isAssessment ? "数学基础首测" : "做题训练" }}</strong>
         <small v-if="isAssessment">{{ assessmentStage }} · 完成后由小逻生成学习计划</small>
@@ -16,9 +12,7 @@
       <div class="practice-clock">◷ {{ elapsedLongLabel }}</div>
       <button class="practice-top-button" :class="{ active: scratchOpen }" type="button" @click="scratchOpen = !scratchOpen">▤ 草稿纸</button>
       <button class="xiaoluo-chip" type="button" @click="openXiaoluo">◉ 小逻</button>
-      <UserAccountButton />
-      <RouterLink class="practice-home-button" to="/">⌂ 返回首页</RouterLink>
-    </header>
+    </section>
 
     <div v-if="pageError" class="practice-alert" role="alert">
       <strong>暂时无法继续</strong>
@@ -225,7 +219,7 @@
       <span>课程：{{ currentQuestion?.course || "等待抽题" }}</span>
       <span>题型：{{ currentQuestion?.type_label || "-" }}</span>
       <span>知识点：{{ currentQuestion?.fine_tag || currentQuestion?.knowledge_tag || "-" }}</span>
-      <small>快捷键：1/A　2/B　3/C　4/D　← 上一题　→ 下一题</small>
+      <small>快捷键：1/A、2/B、3/C、4/D、← 上一题、→ 下一题</small>
     </footer>
   </section>
 </template>
@@ -234,7 +228,6 @@
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { onBeforeRouteUpdate, RouterLink, useRoute, useRouter } from "vue-router";
 
-import UserAccountButton from "../components/UserAccountButton.vue";
 import { apiDelete, apiGet, apiPost, apiUpload } from "../api/client";
 import { useUserStore } from "../stores/user";
 
@@ -629,3 +622,5 @@ onUnmounted(() => {
   window.removeEventListener("keydown", handleKeydown);
 });
 </script>
+
+<style scoped src="../styles/views/practice.css"></style>

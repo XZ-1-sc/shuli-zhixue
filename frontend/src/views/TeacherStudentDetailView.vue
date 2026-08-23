@@ -1,6 +1,8 @@
 <template>
-  <TeacherPageShell active="students" :title="isPreview ? '学生端只读预览' : '学生学习档案'" :eyebrow="isPreview ? '只读观察模式' : '个体学情分析'" :description="isPreview ? '以学生视角查看当前数据，不会写入或修改任何学习记录。' : '从课程、薄弱知识点、近期练习和作业完成情况理解学生。'">
+  <section class="teacher-view">
+    <PageHeader :title="isPreview ? '学生端只读预览' : '学生学习档案'" :eyebrow="isPreview ? '只读观察模式' : '个体学情分析'" :description="isPreview ? '以学生视角查看当前数据，不会写入或修改任何学习记录。' : '从课程、薄弱知识点、近期练习和作业完成情况理解学生。'">
     <template #actions><RouterLink class="teacher-secondary-action" to="/teacher/students">← 返回学生列表</RouterLink><RouterLink v-if="!isPreview && profile.id" class="teacher-primary-action" :to="`/teacher/preview/${profile.id}`">学生端预览</RouterLink></template>
+    </PageHeader>
     <div v-if="loading" class="teacher-loading-grid"><i v-for="n in 8" :key="n"></i></div>
     <section v-else-if="error" class="teacher-state-panel is-error"><strong>学生档案无法加载</strong><p>{{ error }}</p><button @click="load">重试</button></section>
     <template v-else>
@@ -19,14 +21,14 @@
       </section>
       <section class="teacher-panel"><header><div><strong>近期学习记录</strong><small>最近 20 次练习与作业作答</small></div></header><div v-if="data.recent_records.length" class="teacher-table-wrap"><table><thead><tr><th>时间</th><th>课程</th><th>知识点</th><th>题型</th><th>模式</th><th>得分</th><th>状态</th></tr></thead><tbody><tr v-for="item in data.recent_records" :key="item.id"><td>{{ formatTime(item.answered_at) }}</td><td>{{ item.course }}</td><td>{{ item.fine_tag }}</td><td>{{ item.type_label }}</td><td>{{ item.practice_mode }}</td><td>{{ item.score ?? '待评' }}</td><td><span :class="item.review_status === 'pending' ? 'warn' : item.is_correct ? 'normal' : 'warn'">{{ item.review_status === 'pending' ? '待批改' : item.is_correct ? '正确' : '需巩固' }}</span></td></tr></tbody></table></div><div v-else class="teacher-inline-empty">暂无学习记录。</div></section>
     </template>
-  </TeacherPageShell>
+  </section>
 </template>
 
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { apiGet } from "../api/client";
-import TeacherPageShell from "../components/TeacherPageShell.vue";
+import PageHeader from "../components/ui/PageHeader.vue";
 const route = useRoute(); const loading = ref(true); const error = ref(""); const data = ref({ profile: {}, goal: null, courses: [], weak_points: [], recent_records: [], assignments: [] });
 const profile = computed(() => data.value.profile || {}); const isPreview = computed(() => route.meta.preview === true);
 function tone(v) { return v >= 80 ? "is-good" : v >= 60 ? "is-medium" : "is-weak"; }

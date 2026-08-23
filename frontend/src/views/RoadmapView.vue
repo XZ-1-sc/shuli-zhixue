@@ -1,36 +1,5 @@
 <template>
-  <section class="plan-ref-page">
-    <aside class="plan-left-rail">
-      <RouterLink class="plan-logo" to="/">
-        <span>𝑆</span>
-        <strong>数理智学</strong>
-      </RouterLink>
-      <div class="school-seal">学</div>
-      <div class="student-card">
-        <span class="student-avatar">同</span>
-        <strong>{{ user.isLoggedIn ? user.username : "未登录同学" }}</strong>
-        <small>{{ user.isLoggedIn ? "学习档案已同步" : "登录后同步规划" }}<br />本科数学学习</small>
-      </div>
-      <div class="stage-timeline">
-        <p>阶段选择</p>
-        <button v-for="(stage, index) in stageNames" :key="stage" :class="{ active: index === 0 }" type="button">
-          <span>{{ String(index + 1).padStart(2, "0") }}</span>
-          {{ stage }}
-        </button>
-      </div>
-      <RouterLink class="plan-nav-button" to="/roadmap">▥ 规划总览</RouterLink>
-      <RouterLink class="plan-nav-button" to="/">◎ 设置目标</RouterLink>
-    </aside>
-
-    <main class="plan-main">
-      <header class="plan-topline">
-        <div>学习规划 <span>›</span> <strong>完整学习规划 (3/4)</strong></div>
-        <div class="plan-top-actions">
-          <UserAccountButton />
-          <RouterLink to="/">返回首页</RouterLink>
-        </div>
-      </header>
-
+  <section class="student-page plan-main">
       <section class="plan-title-block">
         <p class="math-doodle">∫  d/dx  ∑  π²/6</p>
         <h1>完整学习规划</h1>
@@ -110,7 +79,6 @@
         <div><span>已学知识点</span><strong>86 / 480</strong></div>
         <RouterLink to="/knowledge">查看能力雷达图</RouterLink>
       </footer>
-    </main>
   </section>
 </template>
 
@@ -118,14 +86,9 @@
 import { computed, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 
-import UserAccountButton from "../components/UserAccountButton.vue";
 import { apiGet } from "../api/client";
-import { useUserStore } from "../stores/user";
-
-const user = useUserStore();
 const roadmap = ref({});
 
-const stageNames = ["大一", "大二", "大三", "大四"];
 
 const planStages = computed(() => {
   const source = roadmap.value.stages || [];
@@ -179,7 +142,7 @@ const weeklyPlan = computed(() => roadmap.value.weekly_plan || [
   { day: "周四", course: "概率论", task: "随机事件与概率", minutes: 90 },
   { day: "周五", course: "习题与总结", task: "本周错题复盘", minutes: 90 },
   { day: "周六", course: "拓展阅读", task: "数学思维训练", minutes: 60 },
-  { day: "周日", course: "休息与回顾", task: "知识图谱整理", minutes: "—" }
+  { day: "周日", course: "休息与回顾", task: "知识图谱整理", minutes: "休息" }
 ]);
 
 const flowCourses = ["高等数学（上）", "高等数学（下）", "线性代数（上）", "概率论与数理统计", "复变函数", "实变函数", "抽象代数", "数学建模", "数值分析"];
@@ -188,3 +151,5 @@ onMounted(async () => {
   roadmap.value = await apiGet("/api/study-roadmap");
 });
 </script>
+
+<style scoped src="../styles/views/roadmap.css"></style>

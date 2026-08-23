@@ -209,7 +209,10 @@ def main() -> None:
             By.XPATH, "//button[contains(normalize-space(),'重新生成')]"
         )
         regenerate.click()
-        wait.until(expected.alert_is_present()).accept()
+        confirm_dialog = wait.until(
+            expected.visibility_of_element_located((By.CSS_SELECTOR, ".confirm-dialog"))
+        )
+        confirm_dialog.find_element(By.CSS_SELECTOR, ".confirm-submit").click()
         wait.until(lambda current: "新的班级邀请码已生成" in current.find_element(By.TAG_NAME, "body").text)
         screenshot(driver, "03-class-created")
 
@@ -285,7 +288,11 @@ def main() -> None:
         assert_page_healthy(driver, "批改中心")
         screenshot(driver, "07-review")
 
-        driver.set_window_size(430, 900)
+        driver.set_window_size(390, 844)
+        driver.execute_cdp_cmd(
+            "Emulation.setDeviceMetricsOverride",
+            {"width": 390, "height": 844, "deviceScaleFactor": 1, "mobile": True},
+        )
         mobile_pages = [
             ("/teacher", "教师工作台", "08-mobile-dashboard"),
             ("/teacher/classes", "班级管理", "09-mobile-classes"),

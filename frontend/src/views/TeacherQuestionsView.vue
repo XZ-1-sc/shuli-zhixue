@@ -1,6 +1,8 @@
 <template>
-  <TeacherPageShell active="questions" title="题库管理" eyebrow="内容资产" description="浏览公共题库，维护教师自建题，发布后即可用于组卷。">
+  <section class="teacher-view">
+    <PageHeader title="题库管理" eyebrow="内容资产" description="浏览公共题库，维护教师自建题，发布后即可用于组卷。">
     <template #actions><button class="teacher-secondary-action" type="button" @click="importOpen = true">⇧ 文件导入</button><RouterLink class="teacher-primary-action" to="/teacher/questions/new">＋ 新建题目</RouterLink></template>
+    </PageHeader>
     <section class="teacher-metric-grid teacher-four-metrics"><article><span class="metric-icon cyan">▤</span><div><small>全部可用题目</small><strong>{{ summary.total }}</strong><p>开放与自建题库</p></div></article><article><span class="metric-icon blue">✎</span><div><small>我的题目</small><strong>{{ summary.mine }}</strong><p>当前教师创建</p></div></article><article><span class="metric-icon amber">◌</span><div><small>草稿</small><strong>{{ summary.drafts }}</strong><p>尚不可用于发布作业</p></div></article><article><span class="metric-icon green">✓</span><div><small>已发布</small><strong>{{ summary.published }}</strong><p>可直接组卷</p></div></article></section>
     <section class="teacher-filter-bar teacher-question-filters">
       <label><span>范围</span><select v-model="filters.scope" @change="resetLoad"><option value="all">全部可用</option><option value="mine">我的题目</option><option value="public">公共题库</option></select></label>
@@ -17,12 +19,12 @@
       <footer v-if="total > filters.page_size" class="teacher-pagination"><button :disabled="page <= 1" @click="changePage(page - 1)">上一页</button><span>{{ page }} / {{ Math.ceil(total / filters.page_size) }}</span><button :disabled="page >= Math.ceil(total / filters.page_size)" @click="changePage(page + 1)">下一页</button></footer>
     </section>
     <QuestionImportDialog :open="importOpen" mode="bank" :initial-stage="filters.stage" :initial-course="filters.course" @close="importOpen = false" @imported="handleImported" />
-  </TeacherPageShell>
+  </section>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from "vue"; import { RouterLink, useRouter } from "vue-router";
-import { apiGet, apiPost } from "../api/client"; import TeacherPageShell from "../components/TeacherPageShell.vue"; import QuestionImportDialog from "../components/QuestionImportDialog.vue";
+import { apiGet, apiPost } from "../api/client"; import PageHeader from "../components/ui/PageHeader.vue"; import QuestionImportDialog from "../components/QuestionImportDialog.vue"; import { requestConfirmation } from "../services/confirm";
 const router=useRouter();
 const loading=ref(true), error=ref(""), message=ref(""), messageError=ref(false), importOpen=ref(false), questions=ref([]), total=ref(0), page=ref(1), stages=ref([]), courses=ref([]); const summary=reactive({total:0,mine:0,drafts:0,published:0});
 const filters=reactive({scope:"all",search:"",stage:"",course:"",question_type:"",page_size:20}); const types=[{value:"choice",label:"选择题"},{value:"blank",label:"填空题"},{value:"calculation",label:"计算题"},{value:"proof",label:"证明题"},{value:"comprehensive",label:"综合题"}];
@@ -31,7 +33,7 @@ async function loadQuestions(){loading.value=true;error.value="";try{const data=
 function resetLoad(){page.value=1;loadQuestions();} function changePage(v){page.value=v;loadQuestions();window.scrollTo({top:0,behavior:"smooth"});}
 async function loadCoursesAndQuestions(){filters.course="";courses.value=filters.stage?(await apiGet("/api/courses",{stage:filters.stage})).courses||[]:[];resetLoad();}
 async function publishQuestion(item){try{await apiPost(`/api/teacher/questions/${item.id}/publish`);messageError.value=false;message.value="题目已发布，可用于布置作业。";loadQuestions();}catch(e){messageError.value=true;message.value=e.message;}}
-async function archiveQuestion(item){if(!confirm("归档后将不再用于新作业，确定继续吗？"))return;try{await apiPost(`/api/teacher/questions/${item.id}/archive`);messageError.value=false;message.value="题目已归档。";loadQuestions();}catch(e){messageError.value=true;message.value=e.message;}}
+async function archiveQuestion(item){if(!(await requestConfirmation({title:"归档题目",description:"归档后将不再用于新作业，确定继续吗？",confirmLabel:"确认归档"})))return;try{await apiPost(`/api/teacher/questions/${item.id}/archive`);messageError.value=false;message.value="题目已归档。";loadQuestions();}catch(e){messageError.value=true;message.value=e.message;}}
 async function copyQuestion(item){try{const data=await apiPost(`/api/teacher/questions/${item.id}/copy`);messageError.value=false;message.value="已复制为你的草稿题，正在打开编辑器。";await router.push(`/teacher/questions/${data.id}/edit`);}catch(e){messageError.value=true;message.value=e.message;}}
 function handleImported(data){messageError.value=Boolean(data.error_count);message.value=`已导入 ${data.created_count} 道草稿题${data.duplicate_count?`，跳过 ${data.duplicate_count} 道重复题`:""}${data.error_count?`，${data.error_count} 道失败`:""}。`;filters.scope="mine";resetLoad();}
 onMounted(async()=>{try{stages.value=(await apiGet("/api/stages")).stages||[];}finally{loadQuestions();}});

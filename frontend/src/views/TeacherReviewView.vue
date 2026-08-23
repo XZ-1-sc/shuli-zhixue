@@ -1,10 +1,10 @@
 <template>
-  <TeacherPageShell
-    active="review"
+  <section class="teacher-view">
+    <PageHeader
     title="批改中心"
     eyebrow="人工复核"
     description="查看学生文字与图片作答，给出分数、评语和订正要求。"
-  >
+  ></PageHeader>
     <section class="teacher-filter-bar">
       <label>
         <span>状态</span>
@@ -124,14 +124,14 @@
         />
       </div>
     </div>
-  </TeacherPageShell>
+  </section>
 </template>
 
 <script setup>
 import { onMounted, onUnmounted, reactive, ref } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { apiGet, apiPost } from "../api/client";
-import TeacherPageShell from "../components/TeacherPageShell.vue";
+import PageHeader from "../components/ui/PageHeader.vue";
 
 const route = useRoute();
 const loading = ref(true);

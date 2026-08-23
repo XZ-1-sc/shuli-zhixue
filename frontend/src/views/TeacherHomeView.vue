@@ -1,30 +1,11 @@
 <template>
-  <section class="teacher-app-shell">
-    <TeacherSidebar active="dashboard" />
-
-    <main class="teacher-main">
-      <header class="teacher-topbar">
-        <div><span>工作台</span><b>/</b><strong>教师工作台</strong></div>
-        <div class="teacher-top-actions">
-          <RouterLink class="teacher-class-switch" to="/teacher/classes">
-            ▦ {{ selectedClass?.name || "创建第一个班级" }}
-          </RouterLink>
-          <UserAccountButton />
-        </div>
-      </header>
-
-      <section class="teacher-content">
-        <header class="teacher-page-heading">
-          <div>
-            <small>教学总览</small>
-            <h1>教师工作台</h1>
-            <p>掌握班级进度，及时发现需要帮助的学生。</p>
-          </div>
-          <div class="teacher-heading-actions">
+  <section class="teacher-view">
+        <PageHeader title="教师工作台" eyebrow="教学总览" description="掌握班级进度，及时发现需要帮助的学生。">
+          <template #actions>
             <RouterLink class="teacher-primary-action" to="/teacher/classes?create=1">＋ 创建班级</RouterLink>
             <RouterLink class="teacher-secondary-action" to="/teacher/assignments/new">布置作业</RouterLink>
-          </div>
-        </header>
+          </template>
+        </PageHeader>
 
         <div v-if="loading" class="teacher-loading-grid" aria-label="正在加载教师工作台">
           <i v-for="item in 8" :key="item"></i>
@@ -143,8 +124,6 @@
             </section>
           </template>
         </template>
-      </section>
-    </main>
   </section>
 </template>
 
@@ -153,8 +132,7 @@ import { computed, onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 
 import { apiGet } from "../api/client";
-import TeacherSidebar from "../components/TeacherSidebar.vue";
-import UserAccountButton from "../components/UserAccountButton.vue";
+import PageHeader from "../components/ui/PageHeader.vue";
 
 const loading = ref(true);
 const error = ref("");
@@ -164,8 +142,6 @@ const overview = ref({
 });
 
 const summary = computed(() => overview.value.summary);
-const selectedClass = computed(() => overview.value.classes[0]);
-
 function linePoints(key, maxValue) {
   const items = overview.value.trend || [];
   return items.map((item, index) => ({

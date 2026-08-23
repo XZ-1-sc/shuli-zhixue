@@ -1,6 +1,6 @@
 <template>
-  <TeacherPageShell
-    active="assignments"
+  <section class="teacher-view">
+    <PageHeader
     :title="isEdit ? '编辑作业草稿' : '布置作业'"
     eyebrow="智能组卷"
     description="先确定班级与任务要求，再从已发布题库中挑选题目。"
@@ -8,6 +8,7 @@
     <template #actions>
       <RouterLink class="teacher-secondary-action" to="/teacher/assignments">← 返回作业列表</RouterLink>
     </template>
+    </PageHeader>
 
     <form class="teacher-assignment-editor" @submit.prevent="save(false)">
       <section class="teacher-panel teacher-assignment-settings">
@@ -57,14 +58,14 @@
       </footer>
     </form>
     <QuestionImportDialog :open="paperImportOpen" mode="assignment" :initial-stage="selectedClass?.stage || ''" :initial-course="selectedClass?.course || ''" :selection-limit="Math.max(0, 100 - selectedIds.length)" @close="paperImportOpen = false" @imported="handlePaperImported" />
-  </TeacherPageShell>
+  </section>
 </template>
 
 <script setup>
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { apiGet, apiPost, apiPut } from "../api/client";
-import TeacherPageShell from "../components/TeacherPageShell.vue";
+import PageHeader from "../components/ui/PageHeader.vue";
 import QuestionImportDialog from "../components/QuestionImportDialog.vue";
 
 const route = useRoute();

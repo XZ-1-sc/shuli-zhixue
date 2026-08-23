@@ -1,19 +1,5 @@
 <template>
   <section class="review-page-shell">
-    <header class="review-topbar">
-      <RouterLink class="practice-logo" to="/">
-        <span>▰</span>
-        数理智学
-      </RouterLink>
-      <nav>
-        <RouterLink to="/">学习看板</RouterLink>
-        <RouterLink to="/practice">智能练习</RouterLink>
-        <RouterLink to="/knowledge">知识图谱</RouterLink>
-        <RouterLink to="/roadmap">学习规划</RouterLink>
-      </nav>
-      <UserAccountButton />
-    </header>
-
     <main class="review-layout">
       <article class="surface review-list">
         <div class="section-head">
@@ -83,7 +69,6 @@
 import { onMounted, ref } from "vue";
 import { RouterLink } from "vue-router";
 
-import UserAccountButton from "../components/UserAccountButton.vue";
 import { apiGet } from "../api/client";
 import { useUserStore } from "../stores/user";
 

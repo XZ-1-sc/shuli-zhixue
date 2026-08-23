@@ -514,6 +514,15 @@
   .teacher-classes-layout > * { min-width: 0; }
   .teacher-class-list { grid-template-columns: 1fr 1fr; }
   .teacher-sidebar nav { grid-template-columns: repeat(3,1fr); }
+  .teacher-sidebar nav a {
+    grid-template-columns: 24px minmax(0, 1fr);
+    gap: 8px;
+    padding: 0 12px;
+  }
+  .teacher-sidebar nav strong {
+    white-space: nowrap;
+    font-size: 13px;
+  }
   .teacher-analytics-grid > *, .teacher-bottom-grid > *, .teacher-detail-grid > *,
   .teacher-assignment-detail-grid > *, .teacher-review-layout > *, .teacher-editor-layout > * { min-width: 0; }
   .teacher-detail-grid,.teacher-assignment-detail-grid,.teacher-review-layout,.teacher-editor-layout { grid-template-columns:minmax(0,1fr); }

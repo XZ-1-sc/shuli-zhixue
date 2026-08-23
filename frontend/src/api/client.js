@@ -1,3 +1,5 @@
+import { notify } from "../services/toast";
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
 function buildUrl(path, params = {}) {
@@ -19,6 +21,7 @@ async function readJson(response) {
     } catch (error) {
       detail = text || `HTTP ${response.status}`;
     }
+    notify(detail);
     throw new Error(detail);
   }
   return text ? JSON.parse(text) : {};
@@ -84,7 +87,7 @@ export async function streamChat(payload, { onSession, onDelta }) {
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
 
-  while (true) {
+  for (;;) {
     const { value, done } = await reader.read();
     if (done) {
       break;

@@ -42,6 +42,7 @@ jobs:
         working-directory: frontend
         run: |
           npm ci
+          npm run lint
           npm run build
 
       - name: Compose config check

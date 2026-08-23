@@ -1,11 +1,10 @@
 <template>
   <section class="student-assignment-work">
-    <header>
+    <header class="assignment-context-bar">
       <RouterLink to="/assignments">← 我的作业</RouterLink>
       <div><small>{{ detail.assignment?.class_name }}</small><strong>{{ detail.assignment?.title || "正在加载" }}</strong></div>
       <span v-if="canEdit && remainingSeconds !== null" class="student-assignment-countdown">剩余 {{ remainingText }}</span>
       <span v-else-if="detail.assignment?.due_at">截止 {{ formatTime(detail.assignment.due_at) }}</span>
-      <UserAccountButton />
     </header>
 
     <main v-if="loading" class="student-assignment-empty">正在准备试卷…</main>
@@ -63,8 +62,8 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { apiDelete, apiGet, apiPost, apiPut, apiUpload } from "../api/client";
+import { requestConfirmation } from "../services/confirm";
 import { useUserStore } from "../stores/user";
-import UserAccountButton from "../components/UserAccountButton.vue";
 
 const route = useRoute(); const user = useUserStore();
 const loading = ref(true); const error = ref(""); const detail = ref({ assignment: null, attempt: null, questions: [], answers_revealed: false });
@@ -90,7 +89,7 @@ async function start() { try { detail.value = await apiPost(`/api/assignments/${
 async function uploadImages(event) { const files = [...(event.target.files || [])]; if (!files.length) return; uploading.value = true; try { const form = new FormData(); form.append("user_id", user.userId); files.forEach((file) => form.append("files", file)); const data = await apiUpload("/api/uploads/answer-images", form); for (const file of data.files || []) { attachments.value.push({ ...file, previewUrl: file.url }); answer.attachment_ids.push(file.id); } } catch (e) { message.value = e.message; } finally { uploading.value = false; event.target.value = ""; } }
 async function removeAttachment(file) { if (!current.value.saved_answer?.id) { try { await apiDelete(`/api/uploads/${file.id}`); } catch (e) { message.value = e.message; return; } } attachments.value = attachments.value.filter((item) => item.id !== file.id); answer.attachment_ids = answer.attachment_ids.filter((id) => id !== file.id); }
 async function saveAnswer(silent = false) { saving.value = true; if (!silent) message.value = ""; try { await apiPut(`/api/assignments/${route.params.assignmentId}/answers`, { assignment_question_id: current.value.assignment_question_id, ...answer, time_spent_seconds: Math.max(1, Math.floor((Date.now() - questionOpenedAt.value) / 1000)) }); detail.value = await apiGet(`/api/assignments/${route.params.assignmentId}`); hydrateAnswer(); if (!silent) message.value = "本题已保存。"; } catch (e) { message.value = e.message; } finally { saving.value = false; } }
-async function submitAll() { if (!window.confirm("提交后不能修改答案，确定交卷吗？")) return; try { detail.value = await apiPost(`/api/assignments/${route.params.assignmentId}/submit`); stopTimer(); hydrateAnswer(); } catch (e) { message.value = e.message; } }
+async function submitAll() { const confirmed = await requestConfirmation({ title: "提交整份作业", description: "提交后不能修改答案，确定交卷吗？", confirmLabel: "确认交卷" }); if (!confirmed) return; try { detail.value = await apiPost(`/api/assignments/${route.params.assignmentId}/submit`); stopTimer(); hydrateAnswer(); } catch (e) { message.value = e.message; } }
 async function submitForTimeout() { if (timeoutSubmitting.value || !canEdit.value) return; timeoutSubmitting.value = true; message.value = "作业限时已结束，正在自动交卷…"; try { detail.value = await apiPost(`/api/assignments/${route.params.assignmentId}/submit`); hydrateAnswer(); message.value = "已自动交卷。"; } catch (e) { message.value = e.message; } finally { timeoutSubmitting.value = false; } }
 onMounted(load);
 onBeforeUnmount(stopTimer);

@@ -1,34 +1,5 @@
 <template>
-  <section class="ref-shell feature-shell">
-    <header class="ref-topbar">
-      <RouterLink class="ref-brand" to="/">
-        <span class="shield-mark">Σ</span>
-        <strong>数理智学</strong>
-      </RouterLink>
-
-      <nav class="ref-topnav" aria-label="主导航">
-        <RouterLink v-for="item in topNav" :key="item.to" :to="item.to">
-          <span>{{ item.icon }}</span>
-          {{ item.label }}
-        </RouterLink>
-      </nav>
-
-      <div class="ref-actions">
-        <RouterLink class="ghost-action" to="/">返回中控台</RouterLink>
-        <UserAccountButton />
-      </div>
-    </header>
-
-    <aside class="ref-sidebar">
-      <nav class="side-menu" aria-label="学习菜单">
-        <RouterLink v-for="item in sideNav" :key="item.to" :to="item.to">
-          <span>{{ item.icon }}</span>
-          {{ item.label }}
-        </RouterLink>
-      </nav>
-    </aside>
-
-    <main class="ref-main side-feature-main">
+  <section class="student-page side-feature-main">
       <section class="feature-hero">
         <div>
           <small>{{ page.kicker }}</small>
@@ -243,7 +214,6 @@
           <p v-if="settingsSaved">已保存，回到首页后阶段信息会同步更新。</p>
         </form>
       </section>
-    </main>
   </section>
 </template>
 
@@ -251,31 +221,12 @@
 import { computed, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 
-import UserAccountButton from "../components/UserAccountButton.vue";
 import { apiDelete, apiGet, apiPost, apiPut, apiUpload } from "../api/client";
 import { useUserStore } from "../stores/user";
 
-const emit = defineEmits(["open-auth"]);
 const route = useRoute();
 const user = useUserStore();
 
-const topNav = [
-  { to: "/", label: "首页", icon: "⌂" },
-  { to: "/roadmap", label: "学习规划", icon: "▤" },
-  { to: "/practice", label: "做题训练", icon: "▧" },
-  { to: "/knowledge", label: "知识图谱", icon: "⟡" },
-  { to: "/review", label: "错题复盘", icon: "▣" }
-];
-
-const sideNav = [
-  { to: "/", label: "学习中控台", icon: "⌂" },
-  { to: "/messages", label: "消息中心", icon: "✉" },
-  { to: "/profile", label: "学习档案", icon: "▤" },
-  { to: "/achievements", label: "成就徽章", icon: "♕" },
-  { to: "/resources", label: "资源中心", icon: "▣" },
-  { to: "/notebook", label: "笔记本", icon: "▥" },
-  { to: "/settings", label: "设置中心", icon: "⚙" }
-];
 
 const pages = {
   messages: {
@@ -592,3 +543,5 @@ watch(() => route.name, loadPage);
 watch(() => user.userId, loadPage);
 onMounted(loadPage);
 </script>
+
+<style scoped src="../styles/views/side-feature.css"></style>

@@ -1,6 +1,8 @@
 <template>
-  <TeacherPageShell active="students" title="学生学情" eyebrow="数据驱动教学" description="查看练习、正确率、学习时长与作业完成情况，快速定位需要帮助的学生。">
+  <section class="teacher-view">
+    <PageHeader title="学生学情" eyebrow="数据驱动教学" description="查看练习、正确率、学习时长与作业完成情况，快速定位需要帮助的学生。">
     <template #actions><RouterLink class="teacher-secondary-action" to="/teacher/classes">管理班级成员</RouterLink></template>
+    </PageHeader>
 
     <section class="teacher-filter-bar">
       <label><span>班级</span><select v-model="filters.class_id" @change="loadStudents"><option value="">全部班级</option><option v-for="item in classes" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
@@ -24,14 +26,14 @@
         </tr></tbody>
       </table></div>
     </section>
-  </TeacherPageShell>
+  </section>
 </template>
 
 <script setup>
 import { onMounted, reactive, ref } from "vue";
 import { RouterLink } from "vue-router";
 import { apiGet } from "../api/client";
-import TeacherPageShell from "../components/TeacherPageShell.vue";
+import PageHeader from "../components/ui/PageHeader.vue";
 
 const loading = ref(true); const error = ref(""); const classes = ref([]); const students = ref([]);
 const filters = reactive({ class_id: "", search: "" });

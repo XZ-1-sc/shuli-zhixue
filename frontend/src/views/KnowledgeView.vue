@@ -1,27 +1,5 @@
 <template>
-  <section class="knowledge-ref-page">
-    <header class="knowledge-topbar">
-      <RouterLink class="knowledge-logo" to="/">
-        <span>✣</span>
-        <strong>数理智学</strong>
-        <small>大学数学智能学习系统</small>
-      </RouterLink>
-      <nav>
-        <RouterLink to="/">学习看板</RouterLink>
-        <RouterLink to="/roadmap">课程学习</RouterLink>
-        <RouterLink to="/practice">智能练习</RouterLink>
-        <RouterLink class="active" to="/knowledge">知识图谱</RouterLink>
-        <RouterLink to="/review">学习报告</RouterLink>
-      </nav>
-      <label class="knowledge-search">
-        ⌕
-        <input v-model="searchText" placeholder="搜索知识点 / 课程 / 阶段" />
-      </label>
-      <button class="round-icon" type="button" @click="loadAll">↻</button>
-      <UserAccountButton />
-    </header>
-
-    <main class="knowledge-ref-main">
+  <section class="student-page knowledge-ref-main">
       <section class="knowledge-map-area">
         <header>
           <h1>知识图谱与错题复盘</h1>
@@ -61,7 +39,7 @@
               <strong>暂无可展示节点</strong>
               <p>换一个阶段或课程筛选试试。</p>
             </div>
-            <div v-show="visibleNodes.length" ref="graphEl" class="graph-canvas"></div>
+            <div v-if="visibleNodes.length" ref="graphEl" class="graph-canvas"></div>
             <footer>ⓘ 点击节点查看课程、阶段和掌握状态。未做题前所有节点均为未测评。</footer>
           </article>
         </div>
@@ -151,16 +129,14 @@
           去练习
         </RouterLink>
       </aside>
-    </main>
   </section>
 </template>
 
 <script setup>
 import * as echarts from "echarts";
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 
-import UserAccountButton from "../components/UserAccountButton.vue";
 import { apiGet } from "../api/client";
 import { useUserStore } from "../stores/user";
 
@@ -178,6 +154,8 @@ const showLinks = ref(true);
 const loadingGraph = ref(false);
 const graphZoom = ref(1);
 let chart;
+let graphResizeObserver;
+let observedGraphEl;
 
 const courseOptions = computed(() => {
   if (!selectedStage.value) {
@@ -241,20 +219,91 @@ function heatClass(index, score) {
   return "amber";
 }
 
+function buildGraphLayout(nodes) {
+  const stageNames = [...new Set(nodes.map((node) => node.stage || (node.category === "stage" ? node.name : "")).filter(Boolean))];
+  const coursesByStage = new Map(stageNames.map((stage) => [stage, []]));
+  const knowledgeByCourse = new Map();
+
+  nodes.forEach((node) => {
+    const stage = node.stage || (node.category === "stage" ? node.name : "");
+    const course = node.course || (node.category === "course" ? node.name : "");
+    if (course && !coursesByStage.get(stage)?.includes(course)) {
+      coursesByStage.get(stage)?.push(course);
+    }
+    if (node.category === "knowledge") {
+      const key = `${stage}\u0000${course}`;
+      const group = knowledgeByCourse.get(key) || [];
+      group.push(node);
+      knowledgeByCourse.set(key, group);
+    }
+  });
+
+  const positions = new Map();
+  const stageCount = Math.max(stageNames.length, 1);
+  const stageSpan = (Math.PI * 2) / stageCount;
+
+  stageNames.forEach((stage, stageIndex) => {
+    const stageAngle = -Math.PI / 2 + (stageIndex + 0.5) * stageSpan;
+    nodes
+      .filter((node) => node.category === "stage" && (node.stage || node.name) === stage)
+      .forEach((node) => positions.set(node.id, [Math.cos(stageAngle) * 90, Math.sin(stageAngle) * 90]));
+
+    const courses = coursesByStage.get(stage) || [];
+    const courseSpan = stageSpan / Math.max(courses.length, 1);
+    courses.forEach((course, courseIndex) => {
+      const courseAngle = stageAngle - stageSpan / 2 + (courseIndex + 0.5) * courseSpan;
+      nodes
+        .filter((node) => node.category === "course" && (node.course || node.name) === course && node.stage === stage)
+        .forEach((node) => positions.set(node.id, [Math.cos(courseAngle) * 230, Math.sin(courseAngle) * 230]));
+
+      const knowledgeNodes = knowledgeByCourse.get(`${stage}\u0000${course}`) || [];
+      knowledgeNodes.forEach((node, knowledgeIndex) => {
+        const offset = ((knowledgeIndex + 0.5) / Math.max(knowledgeNodes.length, 1) - 0.5) * courseSpan * 0.82;
+        const angle = courseAngle + offset;
+        const radius = 370 + (knowledgeIndex % 3) * 42;
+        positions.set(node.id, [Math.cos(angle) * radius, Math.sin(angle) * radius]);
+      });
+    });
+  });
+
+  return positions;
+}
+
+function observeGraphSize() {
+  if (!graphEl.value || observedGraphEl === graphEl.value) {
+    return;
+  }
+  graphResizeObserver?.disconnect();
+  observedGraphEl = graphEl.value;
+  graphResizeObserver = new ResizeObserver(() => resize());
+  graphResizeObserver.observe(observedGraphEl);
+}
+
 function renderGraph() {
   if (!graphEl.value || !visibleNodes.value.length) {
+    graphResizeObserver?.disconnect();
+    observedGraphEl = null;
     chart?.dispose();
     chart = null;
     return;
   }
+  const width = graphEl.value.clientWidth;
+  const height = graphEl.value.clientHeight;
+  if (!width || !height) {
+    window.requestAnimationFrame(renderGraph);
+    return;
+  }
+  observeGraphSize();
   if (!chart) {
-    chart = echarts.init(graphEl.value);
+    chart = echarts.init(graphEl.value, null, { width, height });
     chart.on("click", (event) => {
       if (event.dataType === "node") {
         selectedNode.value = event.data.raw;
       }
     });
   }
+  const compact = width < 720;
+  const positions = buildGraphLayout(visibleNodes.value);
   chart.setOption({
     tooltip: {
       formatter: (params) => {
@@ -265,26 +314,46 @@ function renderGraph() {
     series: [
       {
         type: "graph",
-        layout: "force",
-        left: "4%",
-        right: "4%",
-        top: "10%",
-        bottom: "6%",
+        layout: "none",
+        left: compact ? "12%" : "4%",
+        right: compact ? "12%" : "4%",
+        top: compact ? "8%" : "10%",
+        bottom: compact ? "8%" : "6%",
         roam: true,
         draggable: true,
         zoom: graphZoom.value,
         categories: [{ name: "stage" }, { name: "course" }, { name: "knowledge" }],
-        force: { repulsion: 110, edgeLength: [54, 112], gravity: 0.22, layoutAnimation: false },
-        label: { show: true, color: "#edf9fa", fontSize: 11, fontWeight: 700, overflow: "truncate", width: 76 },
+        label: {
+          show: true,
+          color: "#edf9fa",
+          fontSize: compact ? 9 : 11,
+          fontWeight: 700,
+          overflow: "truncate",
+          width: compact ? 52 : 76,
+          formatter: (params) => (params.data.raw.category === "knowledge" ? "" : params.name)
+        },
         labelLayout: { hideOverlap: true },
+        emphasis: { focus: "adjacency", label: { show: true, formatter: "{b}" } },
         edgeSymbol: ["none", "arrow"],
         edgeSymbolSize: 7,
         lineStyle: { color: "rgba(191, 220, 226, 0.36)", curveness: 0.12 },
         data: visibleNodes.value.map((node) => ({
+          x: positions.get(node.id)?.[0] || 0,
+          y: positions.get(node.id)?.[1] || 0,
           id: node.id,
           name: node.name,
           category: node.category,
-          symbolSize: node.category === "stage" ? 44 : node.category === "course" ? 34 : Math.min(28, node.symbolSize || 24),
+          symbolSize: compact
+            ? node.category === "stage"
+              ? 24
+              : node.category === "course"
+                ? 16
+                : 5
+            : node.category === "stage"
+              ? 32
+              : node.category === "course"
+                ? 20
+                : 7,
           value: node.mastery,
           raw: node,
           itemStyle: {
@@ -354,7 +423,9 @@ function resetGraph() {
 }
 
 function resize() {
-  chart?.resize();
+  if (chart && graphEl.value?.clientWidth && graphEl.value?.clientHeight) {
+    chart.resize();
+  }
 }
 
 watch([searchText, showLinks], () => nextTick(renderGraph));
@@ -367,6 +438,9 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener("resize", resize);
+  graphResizeObserver?.disconnect();
   chart?.dispose();
 });
 </script>
+
+<style scoped src="../styles/views/knowledge.css"></style>

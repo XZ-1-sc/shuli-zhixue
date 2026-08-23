@@ -36,6 +36,8 @@ backend/.env.*
 !*.env.example
 !backend/.env.example
 !backend/.env.docker.example
+!frontend/.env.development.example
+!frontend/.env.production.example
 
 # Docker local state
 docker-data/

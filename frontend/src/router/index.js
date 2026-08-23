@@ -1,26 +1,35 @@
 import { createRouter, createWebHistory } from "vue-router";
 
-import AuthView from "../views/AuthView.vue";
-import DashboardView from "../views/DashboardView.vue";
-import KnowledgeView from "../views/KnowledgeView.vue";
-import PracticeView from "../views/PracticeView.vue";
-import ReviewView from "../views/ReviewView.vue";
-import RoadmapView from "../views/RoadmapView.vue";
-import SideFeatureView from "../views/SideFeatureView.vue";
-import TeacherHomeView from "../views/TeacherHomeView.vue";
-import TeacherClassesView from "../views/TeacherClassesView.vue";
-import TeacherStudentsView from "../views/TeacherStudentsView.vue";
-import TeacherStudentDetailView from "../views/TeacherStudentDetailView.vue";
-import TeacherQuestionsView from "../views/TeacherQuestionsView.vue";
-import TeacherQuestionEditorView from "../views/TeacherQuestionEditorView.vue";
-import TeacherAssignmentsView from "../views/TeacherAssignmentsView.vue";
-import TeacherAssignmentEditorView from "../views/TeacherAssignmentEditorView.vue";
-import TeacherAssignmentDetailView from "../views/TeacherAssignmentDetailView.vue";
-import TeacherReviewView from "../views/TeacherReviewView.vue";
-import StudentAssignmentsView from "../views/StudentAssignmentsView.vue";
-import StudentAssignmentView from "../views/StudentAssignmentView.vue";
+const AuthView = () => import("../views/AuthView.vue");
+const DashboardView = () => import("../views/DashboardView.vue");
+const KnowledgeView = () => import("../views/KnowledgeView.vue");
+const PracticeView = () => import("../views/PracticeView.vue");
+const ReviewView = () => import("../views/ReviewView.vue");
+const RoadmapView = () => import("../views/RoadmapView.vue");
+const SideFeatureView = () => import("../views/SideFeatureView.vue");
+const TeacherHomeView = () => import("../views/TeacherHomeView.vue");
+const TeacherClassesView = () => import("../views/TeacherClassesView.vue");
+const TeacherStudentsView = () => import("../views/TeacherStudentsView.vue");
+const TeacherStudentDetailView = () => import("../views/TeacherStudentDetailView.vue");
+const TeacherQuestionsView = () => import("../views/TeacherQuestionsView.vue");
+const TeacherQuestionEditorView = () => import("../views/TeacherQuestionEditorView.vue");
+const TeacherAssignmentsView = () => import("../views/TeacherAssignmentsView.vue");
+const TeacherAssignmentEditorView = () => import("../views/TeacherAssignmentEditorView.vue");
+const TeacherAssignmentDetailView = () => import("../views/TeacherAssignmentDetailView.vue");
+const TeacherReviewView = () => import("../views/TeacherReviewView.vue");
+const StudentAssignmentsView = () => import("../views/StudentAssignmentsView.vue");
+const StudentAssignmentView = () => import("../views/StudentAssignmentView.vue");
 
-const studentMeta = (title) => ({ title, requiresAuth: true, role: "student" });
+const studentMeta = (title) => ({ title, requiresAuth: true, role: "student", layout: "student" });
+const teacherMeta = (title, navKey, extra = {}) => ({
+  title,
+  navKey,
+  requiresAuth: true,
+  role: "teacher",
+  hideAssistant: true,
+  layout: "teacher",
+  ...extra
+});
 
 const routes = [
   { path: "/auth", name: "auth", component: AuthView, meta: { title: "账号登录", hideAssistant: true } },
@@ -41,25 +50,25 @@ const routes = [
     path: "/teacher",
     name: "teacher-home",
     component: TeacherHomeView,
-    meta: { title: "教师工作台", requiresAuth: true, role: "teacher", hideAssistant: true }
+    meta: teacherMeta("教师工作台", "dashboard")
   },
   {
     path: "/teacher/classes",
     name: "teacher-classes",
     component: TeacherClassesView,
-    meta: { title: "班级管理", requiresAuth: true, role: "teacher", hideAssistant: true }
+    meta: teacherMeta("班级管理", "classes")
   },
-  { path: "/teacher/students", name: "teacher-students", component: TeacherStudentsView, meta: { title: "学生学情", requiresAuth: true, role: "teacher", hideAssistant: true } },
-  { path: "/teacher/students/:studentId", name: "teacher-student-detail", component: TeacherStudentDetailView, meta: { title: "学生详情", requiresAuth: true, role: "teacher", hideAssistant: true } },
-  { path: "/teacher/preview/:studentId", name: "teacher-student-preview", component: TeacherStudentDetailView, meta: { title: "学生端只读预览", requiresAuth: true, role: "teacher", hideAssistant: true, preview: true } },
-  { path: "/teacher/questions", name: "teacher-questions", component: TeacherQuestionsView, meta: { title: "题库管理", requiresAuth: true, role: "teacher", hideAssistant: true } },
-  { path: "/teacher/questions/new", name: "teacher-question-new", component: TeacherQuestionEditorView, meta: { title: "新建题目", requiresAuth: true, role: "teacher", hideAssistant: true } },
-  { path: "/teacher/questions/:questionId/edit", name: "teacher-question-edit", component: TeacherQuestionEditorView, meta: { title: "编辑题目", requiresAuth: true, role: "teacher", hideAssistant: true } },
-  { path: "/teacher/assignments", name: "teacher-assignments", component: TeacherAssignmentsView, meta: { title: "作业管理", requiresAuth: true, role: "teacher", hideAssistant: true } },
-  { path: "/teacher/assignments/new", name: "teacher-assignment-new", component: TeacherAssignmentEditorView, meta: { title: "布置作业", requiresAuth: true, role: "teacher", hideAssistant: true } },
-  { path: "/teacher/assignments/:assignmentId/edit", name: "teacher-assignment-edit", component: TeacherAssignmentEditorView, meta: { title: "编辑作业", requiresAuth: true, role: "teacher", hideAssistant: true } },
-  { path: "/teacher/assignments/:assignmentId", name: "teacher-assignment-detail", component: TeacherAssignmentDetailView, meta: { title: "作业进度", requiresAuth: true, role: "teacher", hideAssistant: true } },
-  { path: "/teacher/review", name: "teacher-review", component: TeacherReviewView, meta: { title: "批改中心", requiresAuth: true, role: "teacher", hideAssistant: true } },
+  { path: "/teacher/students", name: "teacher-students", component: TeacherStudentsView, meta: teacherMeta("学生学情", "students") },
+  { path: "/teacher/students/:studentId", name: "teacher-student-detail", component: TeacherStudentDetailView, meta: teacherMeta("学生详情", "students") },
+  { path: "/teacher/preview/:studentId", name: "teacher-student-preview", component: TeacherStudentDetailView, meta: teacherMeta("学生端只读预览", "students", { preview: true }) },
+  { path: "/teacher/questions", name: "teacher-questions", component: TeacherQuestionsView, meta: teacherMeta("题库管理", "questions") },
+  { path: "/teacher/questions/new", name: "teacher-question-new", component: TeacherQuestionEditorView, meta: teacherMeta("新建题目", "questions") },
+  { path: "/teacher/questions/:questionId/edit", name: "teacher-question-edit", component: TeacherQuestionEditorView, meta: teacherMeta("编辑题目", "questions") },
+  { path: "/teacher/assignments", name: "teacher-assignments", component: TeacherAssignmentsView, meta: teacherMeta("作业管理", "assignments") },
+  { path: "/teacher/assignments/new", name: "teacher-assignment-new", component: TeacherAssignmentEditorView, meta: teacherMeta("布置作业", "assignments") },
+  { path: "/teacher/assignments/:assignmentId/edit", name: "teacher-assignment-edit", component: TeacherAssignmentEditorView, meta: teacherMeta("编辑作业", "assignments") },
+  { path: "/teacher/assignments/:assignmentId", name: "teacher-assignment-detail", component: TeacherAssignmentDetailView, meta: teacherMeta("作业进度", "assignments") },
+  { path: "/teacher/review", name: "teacher-review", component: TeacherReviewView, meta: teacherMeta("批改中心", "review") },
   { path: "/:pathMatch(.*)*", redirect: "/" }
 ];
 

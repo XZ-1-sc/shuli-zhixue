@@ -1,6 +1,8 @@
 <template>
-  <TeacherPageShell active="questions" :title="isEdit ? '编辑题目' : '新建题目'" eyebrow="题目编辑器" description="题干、答案、解析与错因标签完整保存；草稿不会进入学生练习。">
+  <section class="teacher-view">
+    <PageHeader :title="isEdit ? '编辑题目' : '新建题目'" eyebrow="题目编辑器" description="题干、答案、解析与错因标签完整保存；草稿不会进入学生练习。">
     <template #actions><RouterLink class="teacher-secondary-action" to="/teacher/questions">← 返回题库</RouterLink></template>
+    </PageHeader>
     <form class="teacher-editor-layout" @submit.prevent="save('draft')">
       <section class="teacher-panel teacher-editor-form">
         <header><div><strong>题目内容</strong><small>带 * 的项目为必填</small></div></header>
@@ -32,14 +34,14 @@
         <section class="teacher-panel teacher-publish-panel"><header><div><strong>保存设置</strong><small>发布后可用于组卷</small></div></header><label><span>可见范围</span><select v-model="form.visibility"><option value="public">教师题库公开</option><option value="class">仅我的班级</option></select></label><p v-if="error" class="teacher-form-message is-error">{{ error }}</p><button class="teacher-secondary-action" :disabled="saving" type="submit">保存草稿</button><button class="teacher-primary-action" :disabled="saving" type="button" @click="save('published')">{{ saving ? '保存中…' : '保存并发布' }}</button></section>
       </aside>
     </form>
-  </TeacherPageShell>
+  </section>
 </template>
 
 <script setup>
 import { computed, defineComponent, h, onMounted, reactive, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 import { apiDelete, apiGet, apiPost, apiPut, apiUpload } from "../api/client";
-import TeacherPageShell from "../components/TeacherPageShell.vue";
+import PageHeader from "../components/ui/PageHeader.vue";
 
 const ImageUploader = defineComponent({
   props: { title: String, description: String, files: Array, busy: Boolean },

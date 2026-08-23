@@ -1,18 +1,10 @@
 <template>
-  <section class="teacher-app-shell">
-    <TeacherSidebar active="classes" />
-
-    <main class="teacher-main">
-      <header class="teacher-topbar">
-        <div><RouterLink to="/teacher">工作台</RouterLink><b>/</b><strong>班级管理</strong></div>
-        <UserAccountButton />
-      </header>
-
-      <section class="teacher-content">
-        <header class="teacher-page-heading">
-          <div><small>组织与成员</small><h1>班级管理</h1><p>创建课程班级，并按学生用户名添加已经注册的学生。</p></div>
+  <section class="teacher-view">
+        <PageHeader title="班级管理" eyebrow="组织与成员" description="创建课程班级，并按学生用户名添加已经注册的学生。">
+          <template #actions>
           <button class="teacher-primary-action" type="button" @click="openCreate">＋ 创建班级</button>
-        </header>
+          </template>
+        </PageHeader>
 
         <p v-if="pageError" class="teacher-form-message is-error">{{ pageError }}</p>
 
@@ -72,9 +64,6 @@
 
           <article v-else class="teacher-select-class-empty"><span>▦</span><strong>选择一个班级</strong><p>查看成员和学习完成情况。</p></article>
         </section>
-      </section>
-    </main>
-
     <div v-if="createOpen" class="teacher-modal-backdrop" @click.self="closeModal">
       <form class="teacher-modal" @submit.prevent="createClass">
         <header><div><small>{{ editingClassId ? '维护教学组织' : '新建教学组织' }}</small><h2>{{ editingClassId ? '编辑班级' : '创建班级' }}</h2></div><button type="button" aria-label="关闭" @click="closeModal">×</button></header>
@@ -93,8 +82,8 @@ import { computed, onMounted, reactive, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import { apiDelete, apiGet, apiPost, apiPut } from "../api/client";
-import TeacherSidebar from "../components/TeacherSidebar.vue";
-import UserAccountButton from "../components/UserAccountButton.vue";
+import PageHeader from "../components/ui/PageHeader.vue";
+import { requestConfirmation } from "../services/confirm";
 
 const route = useRoute();
 const router = useRouter();
@@ -191,7 +180,7 @@ async function addStudent() {
 }
 
 async function removeStudent(member) {
-  if (!window.confirm(`确认将 ${member.username} 移出当前班级吗？`)) return;
+  if (!(await requestConfirmation({ title: "移出学生", description: `确认将 ${member.username} 移出当前班级吗？`, confirmLabel: "确认移出" }))) return;
   try {
     detail.value = await apiDelete(`/api/teacher/classes/${selectedClassId.value}/members/${member.id}`);
     await loadClasses(selectedClassId.value);
@@ -227,8 +216,8 @@ async function exportMembers() {
   }
 }
 
-async function regenerateInvite() { if (!window.confirm("旧邀请码将立即失效，确定重新生成吗？")) return; try { detail.value = await apiPost(`/api/teacher/classes/${selectedClassId.value}/regenerate-invite`); await loadClasses(selectedClassId.value); memberError.value = false; memberMessage.value = "新的班级邀请码已生成。"; } catch (error) { memberError.value = true; memberMessage.value = error.message; } }
-async function archiveClass() { if (!window.confirm(`确认归档 ${detail.value.class.name} 吗？`)) return; try { await apiPost(`/api/teacher/classes/${selectedClassId.value}/archive`); selectedClassId.value = null; await loadClasses(); } catch (error) { memberError.value = true; memberMessage.value = error.message; } }
+async function regenerateInvite() { if (!(await requestConfirmation({ title: "重新生成邀请码", description: "旧邀请码将立即失效，确定重新生成吗？", confirmLabel: "重新生成" }))) return; try { detail.value = await apiPost(`/api/teacher/classes/${selectedClassId.value}/regenerate-invite`); await loadClasses(selectedClassId.value); memberError.value = false; memberMessage.value = "新的班级邀请码已生成。"; } catch (error) { memberError.value = true; memberMessage.value = error.message; } }
+async function archiveClass() { if (!(await requestConfirmation({ title: "归档班级", description: `确认归档 ${detail.value.class.name} 吗？`, confirmLabel: "确认归档" }))) return; try { await apiPost(`/api/teacher/classes/${selectedClassId.value}/archive`); selectedClassId.value = null; await loadClasses(); } catch (error) { memberError.value = true; memberMessage.value = error.message; } }
 
 onMounted(initialize);
 </script>
