@@ -1,7 +1,7 @@
 <template>
   <section class="teacher-view">
     <PageHeader :title="isPreview ? '学生端只读预览' : '学生学习档案'" :eyebrow="isPreview ? '只读观察模式' : '个体学情分析'" :description="isPreview ? '以学生视角查看当前数据，不会写入或修改任何学习记录。' : '从课程、薄弱知识点、近期练习和作业完成情况理解学生。'">
-    <template #actions><RouterLink class="teacher-secondary-action" to="/teacher/students">← 返回学生列表</RouterLink><RouterLink v-if="!isPreview && profile.id" class="teacher-primary-action" :to="`/teacher/preview/${profile.id}`">学生端预览</RouterLink></template>
+    <template #actions><button v-if="!isPreview && profile.id" class="teacher-secondary-action" :disabled="insightLoading" type="button" @click="generateInsight">{{ insightLoading ? "分析中…" : "✦ AI 解读" }}</button><RouterLink class="teacher-secondary-action" to="/teacher/students">← 返回学生列表</RouterLink><RouterLink v-if="!isPreview && profile.id" class="teacher-primary-action" :to="`/teacher/preview/${profile.id}`">学生端预览</RouterLink></template>
     </PageHeader>
     <div v-if="loading" class="teacher-loading-grid"><i v-for="n in 8" :key="n"></i></div>
     <section v-else-if="error" class="teacher-state-panel is-error"><strong>学生档案无法加载</strong><p>{{ error }}</p><button @click="load">重试</button></section>
@@ -11,6 +11,7 @@
         <i>{{ profile.username?.slice(0, 1) }}</i><div><small>{{ profile.current_stage }} · {{ profile.class_names }}</small><h2>{{ profile.nickname }}</h2><p>@{{ profile.username }} · 最近学习 {{ formatTime(profile.last_active) }}</p></div>
         <dl><div><dt>练习量</dt><dd>{{ profile.practice_count }}<small>题</small></dd></div><div><dt>正确率</dt><dd>{{ profile.accuracy }}<small>%</small></dd></div><div><dt>学习时长</dt><dd>{{ profile.study_hours }}<small>h</small></dd></div></dl>
       </section>
+      <p v-if="aiError" class="teacher-form-message is-error">{{ aiError }}</p>
       <section class="teacher-detail-grid">
         <article class="teacher-panel"><header><div><strong>课程掌握情况</strong><small>根据真实作答聚合</small></div></header><div v-if="data.courses.length" class="mastery-list"><div v-for="item in data.courses" :key="item.course"><span><b>{{ item.course }}</b><small>{{ item.attempts }} 次 · 错 {{ item.wrong_count }} 次</small></span><i><em :class="tone(item.accuracy)" :style="{ width: `${Math.max(item.accuracy, 3)}%` }"></em></i><strong>{{ item.accuracy }}%</strong></div></div><div v-else class="teacher-inline-empty">尚无做题数据。</div></article>
         <article class="teacher-panel"><header><div><strong>学习目标</strong><small>学生当前设置</small></div></header><dl v-if="data.goal" class="teacher-goal-list"><div><dt>目标阶段</dt><dd>{{ data.goal.target_stage }}</dd></div><div><dt>目标课程</dt><dd>{{ data.goal.target_course }}</dd></div><div><dt>每周时长</dt><dd>{{ data.goal.weekly_hours }} 小时</dd></div><div><dt>目标日期</dt><dd>{{ data.goal.exam_date || '未设置' }}</dd></div></dl><div v-else class="teacher-inline-empty">学生尚未设置学习目标。</div></article>
@@ -27,13 +28,15 @@
 <script setup>
 import { computed, onMounted, ref } from "vue";
 import { RouterLink, useRoute } from "vue-router";
-import { apiGet } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 import PageHeader from "../components/ui/PageHeader.vue";
 const route = useRoute(); const loading = ref(true); const error = ref(""); const data = ref({ profile: {}, goal: null, courses: [], weak_points: [], recent_records: [], assignments: [] });
+const insightLoading = ref(false); const aiError = ref("");
 const profile = computed(() => data.value.profile || {}); const isPreview = computed(() => route.meta.preview === true);
 function tone(v) { return v >= 80 ? "is-good" : v >= 60 ? "is-medium" : "is-weak"; }
 function formatTime(v) { return v ? new Date(v).toLocaleString("zh-CN") : "未开始"; } function formatDate(v) { return new Date(v).toLocaleDateString("zh-CN"); }
 function statusLabel(v) { return ({ in_progress: "进行中", submitted: "已提交", grading: "批改中", graded: "已评分", returned: "需订正" })[v] || "未开始"; }
 async function load() { loading.value = true; error.value = ""; try { data.value = await apiGet(`/api/teacher/students/${route.params.studentId}${isPreview.value ? '/preview' : ''}`); } catch (e) { error.value = e.message; } finally { loading.value = false; } }
+async function generateInsight() { insightLoading.value = true; aiError.value = ""; try { const response = await apiPost("/api/teacher/ai/class-insight", { scope: "student", student_id: Number(route.params.studentId) }); window.dispatchEvent(new CustomEvent("xiaoluo:open", { detail: { card: { ...response.card, title: `${profile.value.nickname} · AI 个体解读` }, prompt: `请结合 ${profile.value.nickname} 的学情解读，给出下一步个体教学重点。`, autoSend: true } })); } catch (e) { aiError.value = e.message; } finally { insightLoading.value = false; } }
 onMounted(load);
 </script>

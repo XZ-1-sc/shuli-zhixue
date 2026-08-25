@@ -6,13 +6,17 @@ from fastapi import APIRouter, Depends, Query
 from ...database.repositories.diagnosis import (
     _diagnose_sync,
     _get_goal_sync,
+    _learning_insights_sync,
+    _recent_negotiation_sync,
     _recommend_sync,
+    _review_analysis_sync,
     _save_goal_sync,
     _study_roadmap_sync,
     _wrong_questions_sync,
 )
 from ...orchestrator import run_pipeline
 from ...security import require_student_user
+from ...services.student_ai_service import generate_weekly_digest_sync
 from ..schemas import GoalRequest
 
 
@@ -77,6 +81,26 @@ async def wrong_questions(
     current: dict[str, Any] = Depends(require_student_user),
 ) -> dict[str, Any]:
     return await asyncio.to_thread(_wrong_questions_sync, int(current["id"]), limit, offset)
+
+
+@router.get("/review/analysis")
+async def review_analysis(current: dict[str, Any] = Depends(require_student_user)) -> dict[str, Any]:
+    return await asyncio.to_thread(_review_analysis_sync, int(current["id"]))
+
+
+@router.post("/review/weekly-digest")
+async def weekly_digest(current: dict[str, Any] = Depends(require_student_user)) -> dict[str, Any]:
+    return await asyncio.to_thread(generate_weekly_digest_sync, int(current["id"]))
+
+
+@router.get("/learning-insights")
+async def learning_insights(current: dict[str, Any] = Depends(require_student_user)) -> dict[str, Any]:
+    return await asyncio.to_thread(_learning_insights_sync, int(current["id"]))
+
+
+@router.get("/negotiation/recent")
+async def recent_negotiation(current: dict[str, Any] = Depends(require_student_user)) -> dict[str, Any]:
+    return await asyncio.to_thread(_recent_negotiation_sync, int(current["id"]))
 
 
 @router.get("/user-goals")

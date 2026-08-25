@@ -21,6 +21,9 @@ async function readJson(response) {
     } catch (error) {
       detail = text || `HTTP ${response.status}`;
     }
+    if (response.status >= 500 && (!detail || /^internal server error$/i.test(String(detail).trim()))) {
+      detail = "服务器暂时无法处理请求，请稍后重试。";
+    }
     notify(detail);
     throw new Error(detail);
   }
@@ -72,7 +75,10 @@ export async function apiDelete(path, params = {}) {
   );
 }
 
-export async function streamChat(payload, { onSession, onDelta }) {
+export async function streamChat(
+  payload,
+  { onSession, onThinking, onDelta, onCard, onAction, onEvent, onDone } = {}
+) {
   const response = await fetch(buildUrl("/api/chat"), {
     method: "POST",
     credentials: "include",
@@ -80,7 +86,13 @@ export async function streamChat(payload, { onSession, onDelta }) {
     body: JSON.stringify(payload)
   });
   if (!response.ok || !response.body) {
-    throw new Error(await response.text());
+    const raw = await response.text();
+    try {
+      throw new Error(JSON.parse(raw).detail || raw);
+    } catch (error) {
+      if (error instanceof SyntaxError) throw new Error(raw || `HTTP ${response.status}`);
+      throw error;
+    }
   }
 
   const reader = response.body.getReader();
@@ -96,21 +108,29 @@ export async function streamChat(payload, { onSession, onDelta }) {
     const events = buffer.split("\n\n");
     buffer = events.pop() || "";
     for (const event of events) {
-      const line = event.split("\n").find((item) => item.startsWith("data:"));
-      if (!line) {
+      const data = event
+        .split(/\r?\n/)
+        .filter((item) => item.startsWith("data:"))
+        .map((item) => item.replace(/^data:\s?/, ""))
+        .join("\n");
+      if (!data) {
         continue;
       }
-      const data = line.replace(/^data:\s*/, "");
       if (data === "[DONE]") {
+        onDone?.();
         return;
       }
       const parsed = JSON.parse(data);
+      onEvent?.(parsed);
       if (parsed.session_id) {
         onSession?.(parsed.session_id);
       }
-      if (parsed.delta) {
-        onDelta?.(parsed.delta);
-      }
+      if (parsed.type === "thinking") onThinking?.(parsed);
+      const delta = parsed.type === "delta" ? parsed.text ?? parsed.delta : parsed.delta;
+      if (delta) onDelta?.(delta, parsed);
+      if (parsed.type === "card" && parsed.card) onCard?.(parsed.card);
+      if (parsed.type === "action" && parsed.action) onAction?.(parsed.action);
     }
   }
+  onDone?.();
 }

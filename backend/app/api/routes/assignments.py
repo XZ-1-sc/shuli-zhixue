@@ -10,6 +10,7 @@ from sqlalchemy import text
 from ...agents.evaluator import evaluate
 from ...database.session import SessionLocal
 from ...database.repositories.questions import _get_question_sync, _validate_attachment_ids
+from ...database.repositories.diagnosis import _practice_review_brief_sync
 from ...security import require_student
 from ...services.scoring import _score_subjective
 from ..utils import _parse_json_list, _question_select_sql, _row_to_question
@@ -394,10 +395,46 @@ def _submit_sync(user_id: int, assignment_id: int) -> dict[str, Any]:
         next_status = "grading" if pending else "graded"
         db.execute(text("UPDATE assignment_attempts SET status=:status,submitted_at=NOW(),total_score=:score,graded_at=CASE WHEN :status='graded' THEN NOW() ELSE NULL END WHERE id=:id"), {"status": next_status, "score": total_score, "id": attempt["id"]})
         db.execute(text("INSERT INTO user_notifications (user_id,type,title,content,action_url) VALUES (:teacher,'assignment','学生已提交作业',:content,:url)"), {"teacher": assignment["teacher_id"], "content": f"学生已提交《{assignment['title']}》，待批改 {pending} 题。", "url": f"/teacher/assignments/{assignment_id}"})
+        report_stats = db.execute(
+            text(
+                """
+                SELECT COUNT(ans.id) AS answer_count,
+                       ROUND(AVG(CASE WHEN ans.is_correct IS NOT NULL THEN ans.is_correct END)*100,1) AS accuracy,
+                       SUM(CASE WHEN ans.review_status='pending' THEN 1 ELSE 0 END) AS pending_count,
+                       COUNT(DISTINCT q.knowledge_tag) AS knowledge_count
+                FROM assignment_attempts aa
+                JOIN assignment_answers ans ON ans.attempt_id=aa.id
+                JOIN assignment_questions aq ON aq.id=ans.assignment_question_id
+                JOIN questions q ON q.id=aq.question_id
+                WHERE aa.assignment_id=:assignment_id AND aa.submitted_at IS NOT NULL
+                """
+            ),
+            {"assignment_id": assignment_id},
+        ).mappings().one()
+        report_content = (
+            f"《{assignment['title']}》当前累计 {int(report_stats['answer_count'] or 0)} 次作答，"
+            f"已判定题正确率 {float(report_stats['accuracy'] or 0):g}%，覆盖 {int(report_stats['knowledge_count'] or 0)} 个知识点，"
+            f"待人工批改 {int(report_stats['pending_count'] or 0)} 题。"
+        )
+        db.execute(
+            text(
+                """
+                INSERT INTO user_notifications (user_id,type,title,content,action_url)
+                VALUES (:teacher,'assignment_report','作业分析摘要已更新',:content,:url)
+                """
+            ),
+            {"teacher": assignment["teacher_id"], "content": report_content, "url": f"/teacher/assignments/{assignment_id}"},
+        )
         db.commit()
         evaluation_task_id = f"assignment-{attempt['id']}"
     data = _detail_sync(user_id, assignment_id)
     data["evaluation"] = evaluate(user_id, evaluation_task_id).model_dump()
+    data["review_brief"] = _practice_review_brief_sync(
+        user_id,
+        evaluation_task_id,
+        title=f"《{assignment['title']}》作业复盘",
+        assignment_id=assignment_id,
+    )
     return data
 
 

@@ -1,5 +1,7 @@
+import json
 import math
-from datetime import date
+from collections import Counter
+from datetime import date, timedelta
 from typing import Any
 
 from fastapi import HTTPException
@@ -287,6 +289,230 @@ def _wrong_questions_sync(user_id: int, limit: int, offset: int) -> dict[str, An
         )
         items.append(question)
     return {"user_id": user_id, "items": items, "limit": limit, "offset": offset}
+
+
+def _practice_review_brief_sync(
+    user_id: int,
+    task_id: str,
+    *,
+    title: str = "本次练习复盘",
+    assignment_id: int | None = None,
+) -> dict[str, Any]:
+    with SessionLocal() as db:
+        rows = db.execute(
+            text(
+                """
+                SELECT pr.id, pr.question_id, pr.is_correct, pr.score, pr.review_status,
+                       pr.mistake_tags, q.stage, q.course, q.knowledge_tag, q.fine_tag
+                FROM practice_records AS pr
+                JOIN questions AS q ON q.id = pr.question_id
+                WHERE pr.user_id = :user_id AND pr.task_id = :task_id
+                ORDER BY pr.answered_at, pr.id
+                """
+            ),
+            {"user_id": user_id, "task_id": task_id},
+        ).mappings().all()
+
+    graded = [row for row in rows if row["is_correct"] is not None]
+    correct = sum(1 for row in graded if bool(row["is_correct"]))
+    pending = sum(1 for row in rows if row["is_correct"] is None)
+    accuracy = round(correct / len(graded) * 100, 1) if graded else 0.0
+    mistake_counter: Counter[str] = Counter()
+    weak_counter: Counter[tuple[str, str, str, str]] = Counter()
+    for row in rows:
+        if row["is_correct"] is False or row["is_correct"] == 0:
+            tags = _parse_json_list(row["mistake_tags"]) or ["知识点需巩固"]
+            mistake_counter.update(str(tag) for tag in tags)
+            weak_counter.update(
+                [
+                    (
+                        str(row["stage"]),
+                        str(row["course"]),
+                        str(row["knowledge_tag"]),
+                        str(row["fine_tag"] or row["knowledge_tag"]),
+                    )
+                ]
+            )
+    top_mistakes = [{"label": label, "count": count} for label, count in mistake_counter.most_common(3)]
+    weakest = weak_counter.most_common(1)
+    if pending and not graded:
+        suggestion = "本次作答已进入教师复核，结果确认前先整理关键步骤与所用定理。"
+    elif weakest:
+        suggestion = f"下一步优先回炉“{weakest[0][0][3]}”，先复习概念，再完成一组同类题。"
+    elif rows:
+        suggestion = "本次已掌握当前知识点，建议用一道变式题检查迁移能力。"
+    else:
+        suggestion = "完成题目后，小逻会根据真实作答生成复盘建议。"
+    actions: list[dict[str, Any]] = [{"label": "查看完整报告", "type": "navigate", "target": "/review"}]
+    if weakest:
+        stage, course, knowledge_tag, _ = weakest[0][0]
+        actions.insert(
+            0,
+            {
+                "label": "开始回炉练习",
+                "type": "navigate",
+                "target": "/practice",
+                "query": {"stage": stage, "course": course, "knowledge_tag": knowledge_tag, "mode": "wrong_book", "limit": 8},
+            },
+        )
+    context: dict[str, Any] = {"type": "assignment", "assignment_id": assignment_id} if assignment_id else {"type": "question"}
+    if rows:
+        context.update({"question_id": int(rows[-1]["question_id"]), "record_id": int(rows[-1]["id"])})
+    return {
+        "type": "review",
+        "title": title,
+        "summary": suggestion,
+        "metrics": [
+            {"label": "本次正确率", "value": f"{accuracy:g}%" if graded else "待复核"},
+            {"label": "已完成", "value": f"{len(rows)} 题"},
+            {"label": "待复核", "value": f"{pending} 题"},
+        ],
+        "accuracy": accuracy,
+        "total": len(rows),
+        "graded": len(graded),
+        "correct": correct,
+        "pending": pending,
+        "mistakes": top_mistakes,
+        "suggestion": suggestion,
+        "actions": actions,
+        "context": context,
+    }
+
+
+def _review_analysis_sync(user_id: int) -> dict[str, Any]:
+    records = _recent_records_sync(user_id, 500)
+    wrong = [record for record in records if record.get("is_correct") is False or record.get("is_correct") == 0]
+    reason_counter: Counter[str] = Counter()
+    knowledge_counter: Counter[tuple[str, str, str, str]] = Counter()
+    for record in wrong:
+        reason_counter.update(str(tag) for tag in (record.get("mistake_tags") or ["知识点需巩固"]))
+        knowledge_counter.update(
+            [
+                (
+                    str(record.get("stage") or ""),
+                    str(record.get("course") or ""),
+                    str(record.get("knowledge_tag") or ""),
+                    str(record.get("fine_tag") or record.get("knowledge_tag") or ""),
+                )
+            ]
+        )
+    reasons = [{"label": label, "count": count} for label, count in reason_counter.most_common(8)]
+    knowledge = [
+        {"stage": key[0], "course": key[1], "knowledge_tag": key[2], "fine_tag": key[3], "wrong_count": count}
+        for key, count in knowledge_counter.most_common(5)
+    ]
+    if knowledge:
+        suggestion = f"先处理“{knowledge[0]['fine_tag']}”的高频错误：复习定义后完成 5—8 道同类题，并逐题标注错因。"
+    else:
+        suggestion = "当前没有已评分错题。完成练习后，这里会生成错因分布与薄弱知识点报告。"
+    return {
+        "user_id": user_id,
+        "total_records": len(records),
+        "wrong_count": len(wrong),
+        "reason_distribution": reasons,
+        "weak_knowledge": knowledge,
+        "suggestion": suggestion,
+    }
+
+
+def _learning_insights_sync(user_id: int, days: int = 84) -> dict[str, Any]:
+    start_day = date.today() - timedelta(days=max(1, days) - 1)
+    with SessionLocal() as db:
+        rows = db.execute(
+            text(
+                """
+                SELECT DATE(answered_at) AS day, COUNT(*) AS attempts,
+                       ROUND(AVG(CASE WHEN is_correct IS NOT NULL THEN is_correct END) * 100, 1) AS mastery,
+                       COALESCE(SUM(time_spent_seconds), 0) AS study_seconds
+                FROM practice_records
+                WHERE user_id = :user_id AND answered_at >= :start_day
+                GROUP BY DATE(answered_at)
+                ORDER BY day
+                """
+            ),
+            {"user_id": user_id, "start_day": start_day},
+        ).mappings().all()
+    by_day = {str(row["day"]): row for row in rows}
+    calendar = []
+    for offset in range(days):
+        day = start_day + timedelta(days=offset)
+        row = by_day.get(day.isoformat(), {})
+        calendar.append(
+            {
+                "date": day.isoformat(),
+                "attempts": int(row.get("attempts") or 0),
+                "study_minutes": round(int(row.get("study_seconds") or 0) / 60),
+            }
+        )
+    trend = [
+        {
+            "date": item["date"],
+            "mastery": float(by_day[item["date"]]["mastery"] or 0),
+            "attempts": item["attempts"],
+        }
+        for item in calendar[-30:]
+        if item["date"] in by_day and by_day[item["date"]]["mastery"] is not None
+    ]
+    return {"user_id": user_id, "days": days, "calendar": calendar, "mastery_trend": trend}
+
+
+def _recent_negotiation_sync(user_id: int) -> dict[str, Any]:
+    with SessionLocal() as db:
+        conversation_id = db.execute(
+            text(
+                """
+                SELECT conversation_id FROM negotiation_log
+                WHERE user_id = :user_id
+                ORDER BY created_at DESC, id DESC LIMIT 1
+                """
+            ),
+            {"user_id": user_id},
+        ).scalar()
+        if not conversation_id:
+            return {"available": False, "items": [], "message": "完成首测后即可查看多智能体分析过程。"}
+        rows = db.execute(
+            text(
+                """
+                SELECT round_no, speaker, message_type, content, needs_rediagnosis, created_at
+                FROM negotiation_log
+                WHERE user_id = :user_id AND conversation_id = :conversation_id
+                ORDER BY round_no, created_at, id
+                """
+            ),
+            {"user_id": user_id, "conversation_id": conversation_id},
+        ).mappings().all()
+    items = []
+    confidence = None
+    for row in rows:
+        raw_content = str(row["content"] or "")
+        try:
+            content: Any = json.loads(raw_content)
+        except (TypeError, json.JSONDecodeError):
+            content = {"summary": raw_content[:500]}
+        if row["message_type"] in {"diagnosis", "rediagnosis"} and isinstance(content, dict):
+            confidence = content.get("confidence", confidence)
+        items.append(
+            {
+                "round": int(row["round_no"]),
+                "speaker": str(row["speaker"]),
+                "message_type": str(row["message_type"]),
+                "content": content,
+                "needs_rediagnosis": bool(row["needs_rediagnosis"]),
+                "created_at": _json_safe(row["created_at"]),
+            }
+        )
+    started = rows[0]["created_at"] if rows else None
+    ended = rows[-1]["created_at"] if rows else None
+    duration_ms = max(0, round((ended - started).total_seconds() * 1000)) if started and ended else 0
+    return {
+        "available": True,
+        "conversation_id": str(conversation_id),
+        "rounds": max((item["round"] for item in items), default=0),
+        "rediagnosed": any(item["message_type"] == "rediagnosis" for item in items),
+        "confidence": float(confidence) if confidence is not None else None,
+        "duration_ms": duration_ms,
+        "items": items,
+    }
 
 def _get_goal_sync(user_id: int) -> dict[str, Any]:
     query = text(

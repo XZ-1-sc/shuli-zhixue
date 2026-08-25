@@ -2,12 +2,13 @@ import asyncio
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 
 from ...database.repositories.practice import _submit_answer_sync
 from ...database.repositories.questions import _random_questions_sync
 from ...security import require_student_user
-from ..schemas import AnswerSubmissionRequest
+from ...services.student_ai_service import create_practice_followup_sync, generate_ai_similar_sync
+from ..schemas import AISimilarPracticeRequest, AnswerSubmissionRequest
 
 
 router = APIRouter(prefix="/api", tags=["practice"])
@@ -68,6 +69,23 @@ async def mock_exam(
 @router.post("/practice/submit")
 async def submit_answer(
     payload: AnswerSubmissionRequest,
+    background_tasks: BackgroundTasks,
     current: dict[str, Any] = Depends(require_student_user),
 ) -> dict[str, Any]:
-    return await asyncio.to_thread(_submit_answer_sync, int(current["id"]), payload)
+    user_id = int(current["id"])
+    result = await asyncio.to_thread(_submit_answer_sync, user_id, payload)
+    background_tasks.add_task(
+        create_practice_followup_sync,
+        user_id,
+        result.get("review_brief") or {},
+        result.get("companion_signal") or {},
+    )
+    return result
+
+
+@router.post("/practice/ai-similar")
+async def ai_similar_practice(
+    payload: AISimilarPracticeRequest,
+    current: dict[str, Any] = Depends(require_student_user),
+) -> dict[str, Any]:
+    return await asyncio.to_thread(generate_ai_similar_sync, int(current["id"]), payload)

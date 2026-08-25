@@ -27,7 +27,12 @@
         <button type="button" @click="loadPage">重新加载</button>
       </section>
 
-      <section v-else-if="mode === 'messages'" class="feature-grid messages-grid">
+      <section v-else-if="mode === 'messages'" class="student-message-center">
+        <nav class="message-center-tabs" aria-label="消息分类">
+          <div><button type="button" :class="{ active: messageTab === 'notifications' }" @click="switchMessageTab('notifications')">通知</button><button type="button" :class="{ active: messageTab === 'teachers' }" @click="switchMessageTab('teachers')">与老师 <b v-if="teacherUnreadCount">{{ teacherUnreadCount }}</b></button><button type="button" :class="{ active: messageTab === 'peers' }" @click="switchMessageTab('peers')">同学 <b v-if="peerUnreadCount">{{ peerUnreadCount }}</b></button></div>
+          <button v-if="messageTab !== 'notifications'" class="start-message-action" type="button" @click="openMessageContacts">发起会话</button>
+        </nav>
+        <section v-if="messageTab === 'notifications'" class="feature-grid messages-grid">
         <div v-if="!messages.length" class="glass-panel feature-empty feature-grid-empty">
           <strong>暂无消息</strong>
           <p>新账号不会自动生成个人通知。完成首测或保存学习目标后，这里会出现学习提醒。</p>
@@ -37,7 +42,39 @@
           <small>{{ typeLabel(message.type) }} · {{ formatTime(message.created_at) }}</small>
           <h2>{{ message.title }}</h2>
           <p>{{ message.content }}</p>
+          <RouterLink v-if="message.action_url" :to="message.action_url">查看详情 ›</RouterLink>
+          <button v-if="message.type === 'weekly_report'" class="weekly-digest-trigger" type="button" :disabled="weeklyDigestLoading" @click="loadWeeklyDigest(message.id)">
+            {{ weeklyDigestLoading ? "正在浓缩本周记录…" : "生成 AI 一页纸周报" }}
+          </button>
+          <section v-if="weeklyDigestMessageId === message.id && weeklyDigest" class="weekly-digest-card">
+            <header><div><small>AI 一页纸周报</small><strong>{{ weeklyDigest.stats.period }}</strong></div><button type="button" @click="printWeeklyDigest">导出 / 打印</button></header>
+            <dl><div><dt>作答</dt><dd>{{ weeklyDigest.stats.attempts }}</dd></div><div><dt>正确率</dt><dd>{{ weeklyDigest.stats.accuracy }}%</dd></div><div><dt>学习分钟</dt><dd>{{ weeklyDigest.stats.study_minutes }}</dd></div></dl>
+            <p>{{ weeklyDigest.progress }}</p>
+            <div v-if="weeklyDigest.mistakes_top3?.length" class="weekly-digest-mistakes"><b v-for="item in weeklyDigest.mistakes_top3" :key="`${item.reason}-${item.knowledge}`">{{ item.knowledge }} · {{ item.reason }}（{{ item.count }}）</b></div>
+            <ol><li v-for="item in weeklyDigest.next_week" :key="item">{{ item }}</li></ol>
+          </section>
         </article>
+        </section>
+        <section v-else class="student-teacher-messages">
+          <aside class="glass-panel student-teacher-list">
+            <button v-for="conversation in activeConversations" :key="conversation.id" type="button" :class="{ active: selectedConversationId === conversation.id }" @click="selectMessageConversation(conversation.id)"><i>{{ conversation.other.nickname.slice(0, 1) }}</i><span><strong>{{ conversation.other.nickname }}</strong><small>{{ conversation.other.role === 'teacher' ? '教师' : '同学' }} · @{{ conversation.other.username }}</small><p>{{ conversation.latest_message || "还没有消息" }}</p></span><b v-if="conversation.unread_count">{{ conversation.unread_count }}</b></button>
+            <div v-if="!activeConversations.length" class="feature-empty"><strong>{{ messageTab === "teachers" ? "暂无教师会话" : "暂无同学会话" }}</strong><p>{{ messageTab === "teachers" ? "加入教师班级后，可在这里与老师沟通。" : "可联系同一教师网络内、包括跨班级的同学。" }}</p><button type="button" @click="openMessageContacts">选择联系人</button></div>
+          </aside>
+          <article class="glass-panel student-teacher-thread">
+            <template v-if="selectedConversation">
+              <header><div><small>{{ selectedConversation.relation === "teacher_student" ? "教师沟通" : "同学私聊" }}</small><strong>{{ selectedConversation.other.nickname }}</strong></div></header>
+              <div ref="messageThreadEl" class="student-thread-list">
+                <button v-if="messageHasMore" class="load-earlier" type="button" :disabled="messageThreadLoading" @click="loadEarlierMessages">{{ messageThreadLoading ? "加载中…" : "加载更早消息" }}</button>
+                <div v-if="messageThreadLoading && !conversationMessages.length" class="inline-empty">正在加载会话…</div>
+                <div v-else-if="!conversationMessages.length" class="inline-empty">还没有消息，可以从一个具体问题开始。</div>
+                <MessageBubble v-for="message in conversationMessages" :key="message.id" :message="message" :current-user-id="user.userId" :other-name="selectedConversation.other.nickname" />
+              </div>
+              <MessageComposer :busy="messageSending" :question-ref="pendingQuestionRef" :placeholder="messageTab === 'teachers' ? '给老师发送消息' : '给同学发送消息'" @send="sendConversationMessage" @clear-question="clearPendingQuestion" />
+            </template>
+            <div v-else class="feature-empty"><strong>选择联系人</strong><p>查看历史消息或开始新的沟通。</p><button type="button" @click="openMessageContacts">发起会话</button></div>
+          </article>
+        </section>
+        <ContactPicker :open="messageContactPickerOpen" :groups="visibleContactGroups" :loading="messageContactsLoading" @close="messageContactPickerOpen = false" @select="startMessageConversation" />
       </section>
 
       <section v-else-if="mode === 'profile'" class="profile-layout">
@@ -63,6 +100,18 @@
               <span>{{ weak.fine_tag || weak.knowledge_tag }}</span>
               <b>{{ weak.score }}%</b>
             </RouterLink>
+          </div>
+        </article>
+        <article class="glass-panel profile-card profile-wide ability-map-card">
+          <header><div><small>错因基因库</small><h2>知识点 × 题型 × 错因</h2></div><p>{{ abilityMap.advice || "完成练习后生成三维能力画像。" }}</p></header>
+          <div class="ability-map-layout">
+            <RadarChart :items="abilityRadar" />
+            <div class="ability-heat-table">
+              <p v-if="!abilityMap.cells?.length" class="inline-empty">暂无可聚合记录。</p>
+              <div v-for="cell in (abilityMap.cells || []).slice(0, 16)" :key="`${cell.knowledge}-${cell.type}-${cell.reason}`" :style="{ '--ability': cell.accuracy }">
+                <strong>{{ cell.knowledge }}</strong><span>{{ questionTypeLabel(cell.type) }}</span><b>{{ cell.reason }}</b><em>{{ Math.round(cell.accuracy * 100) }}%</em>
+              </div>
+            </div>
           </div>
         </article>
         <article class="glass-panel profile-card profile-wide">
@@ -210,6 +259,10 @@
             目标日期
             <input v-model="settings.exam_date" type="date" />
           </label>
+          <label class="settings-toggle-row">
+            <span><b>小逻主动提醒</b><small>允许每日问候、学习关心和站内提示；深夜仍保持静默。</small></span>
+            <input v-model="settings.notify_xiaoluo" type="checkbox" role="switch" />
+          </label>
           <button type="submit">保存设置</button>
           <p v-if="settingsSaved">已保存，回到首页后阶段信息会同步更新。</p>
         </form>
@@ -218,21 +271,27 @@
 </template>
 
 <script setup>
-import { computed, onMounted, reactive, ref, watch } from "vue";
-import { RouterLink, useRoute } from "vue-router";
+import { computed, defineAsyncComponent, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import { apiDelete, apiGet, apiPost, apiPut, apiUpload } from "../api/client";
+import ContactPicker from "../components/messages/ContactPicker.vue";
+import MessageBubble from "../components/messages/MessageBubble.vue";
+import MessageComposer from "../components/messages/MessageComposer.vue";
 import { useUserStore } from "../stores/user";
 
+const RadarChart = defineAsyncComponent(() => import("../components/RadarChart.vue"));
+
 const route = useRoute();
+const router = useRouter();
 const user = useUserStore();
 
 
 const pages = {
   messages: {
     kicker: "消息中心",
-    title: "学习提醒与系统通知",
-    description: "把今日任务、错题回炉、小逻建议和系统提示集中在这里。"
+    title: "沟通与学习提醒",
+    description: "集中查看系统通知，与老师沟通，也可以联系同一教师网络内的同学。"
   },
   profile: {
     kicker: "学习档案",
@@ -268,7 +327,25 @@ const authRequired = computed(() => mode.value !== "resources" && !user.userId);
 const loading = ref(false);
 const error = ref("");
 const messages = ref([]);
+const messageTab = ref(route.query.teacher_id || route.query.conversation_id ? "teachers" : "notifications");
+const messageConversations = ref([]);
+const selectedConversationId = ref(null);
+const conversationMessages = ref([]);
+const messageThreadLoading = ref(false);
+const messageSending = ref(false);
+const messageThreadEl = ref(null);
+const messageHasMore = ref(false);
+const messageNextBeforeId = ref(null);
+const messageContactPickerOpen = ref(false);
+const messageContactsLoading = ref(false);
+const messageContactGroups = ref([]);
+const showAllMessageContacts = ref(false);
+const pendingQuestionRef = ref(null);
 const profile = ref({});
+const abilityMap = ref({ cells: [] });
+const weeklyDigest = ref(null);
+const weeklyDigestMessageId = ref(null);
+const weeklyDigestLoading = ref(false);
 const achievements = ref([]);
 const resources = ref([]);
 const notes = ref([]);
@@ -285,8 +362,27 @@ const settingsSaved = ref(false);
 const stageOptions = ["大一", "大二", "大三", "大四"];
 const resourceFilter = reactive({ stage: "", course: "" });
 const noteForm = reactive({ title: "", content: "", course: "", knowledge_tag: "" });
-const settings = reactive({ target_stage: "大一", target_course: "高等数学上", weekly_hours: 8, exam_date: "" });
+const settings = reactive({ target_stage: "大一", target_course: "高等数学上", weekly_hours: 8, exam_date: "", notify_xiaoluo: true });
 const canSaveNote = computed(() => Boolean(noteForm.title.trim() && (noteForm.content.trim() || noteAttachments.value.length)));
+const activeConversations = computed(() => messageConversations.value.filter((item) => item.relation === (messageTab.value === "peers" ? "student_student" : "teacher_student")));
+const selectedConversation = computed(() => messageConversations.value.find((item) => item.id === selectedConversationId.value) || null);
+const teacherUnreadCount = computed(() => messageConversations.value.filter((item) => item.relation === "teacher_student").reduce((sum, item) => sum + Number(item.unread_count || 0), 0));
+const peerUnreadCount = computed(() => messageConversations.value.filter((item) => item.relation === "student_student").reduce((sum, item) => sum + Number(item.unread_count || 0), 0));
+const visibleContactGroups = computed(() => {
+  if (showAllMessageContacts.value) return messageContactGroups.value;
+  const key = messageTab.value === "peers" ? "peers" : "teachers";
+  return messageContactGroups.value.filter((group) => group.key === key);
+});
+const abilityRadar = computed(() => {
+  const grouped = new Map();
+  for (const cell of abilityMap.value.cells || []) {
+    const current = grouped.get(cell.knowledge) || { total: 0, weighted: 0 };
+    current.total += Number(cell.attempts || 0);
+    current.weighted += Number(cell.accuracy || 0) * Number(cell.attempts || 0);
+    grouped.set(cell.knowledge, current);
+  }
+  return [...grouped.entries()].map(([name, value]) => ({ name, score: value.total ? Math.round(value.weighted / value.total * 100) : 0 })).slice(0, 6);
+});
 
 function formatTime(value) {
   if (!value) {
@@ -300,9 +396,23 @@ function typeLabel(value) {
     task: "任务",
     review: "复盘",
     assistant: "小逻",
+    weekly_report: "学习周报",
+    care_inactive: "学习关心",
+    care_regress: "学习关心",
+    care_late_night: "休息提醒",
+    daily_greeting: "小逻播报",
+    plan_due: "计划提醒",
+    practice_followup: "小逻复盘",
+    ticket_reply: "教师回复",
+    teacher_advice: "学习调整建议",
+    teacher_message: "教师消息",
+    peer_message: "同学消息",
+    assignment_report: "作业分析",
     system: "系统"
   }[value] || "通知";
 }
+
+function questionTypeLabel(value) { return ({ choice: "选择题", blank: "填空题", calculation: "计算题", proof: "证明题", comprehensive: "综合题" })[value] || value; }
 
 function resourceTypeLabel(value) {
   return {
@@ -346,12 +456,147 @@ function fileTypeSymbol(file) {
 }
 
 async function loadMessages() {
-  const data = await apiGet("/api/messages");
+  const [data, conversationData] = await Promise.all([apiGet("/api/messages"), apiGet("/api/messages/conversations")]);
   messages.value = data.items || [];
+  messageConversations.value = conversationData.items || [];
+  const requestedConversationId = Number(route.query.conversation_id || 0);
+  if (messageConversations.value.some((item) => item.id === requestedConversationId)) {
+    await selectMessageConversation(requestedConversationId, false);
+    return;
+  }
+  const requestedTeacherId = Number(route.query.teacher_id || 0);
+  if (requestedTeacherId) {
+    await loadMessageContacts();
+    const contact = messageContactGroups.value.flatMap((group) => group.items || []).find((item) => item.user_id === requestedTeacherId && item.relation === "teacher_student");
+    if (contact) { await startMessageConversation(contact); return; }
+  }
+  const storedQuestion = sessionStorage.getItem("pending_message_question_ref");
+  if (storedQuestion) {
+    try {
+      pendingQuestionRef.value = JSON.parse(storedQuestion);
+      showAllMessageContacts.value = true;
+      await loadMessageContacts();
+      messageContactPickerOpen.value = true;
+      return;
+    } catch (parseError) {
+      sessionStorage.removeItem("pending_message_question_ref");
+    }
+  }
+  if (messageTab.value !== "notifications") {
+    const initial = activeConversations.value[0];
+    if (initial) await selectMessageConversation(initial.id, false);
+  }
+}
+
+async function loadMessageConversationList() {
+  const data = await apiGet("/api/messages/conversations");
+  messageConversations.value = data.items || [];
+}
+
+async function scrollMessageThread() { await nextTick(); if (messageThreadEl.value) messageThreadEl.value.scrollTop = messageThreadEl.value.scrollHeight; }
+
+async function selectMessageConversation(conversationId, updateRoute = true) {
+  const conversation = messageConversations.value.find((item) => item.id === Number(conversationId));
+  if (!conversation) return;
+  messageTab.value = conversation.relation === "student_student" ? "peers" : "teachers";
+  selectedConversationId.value = Number(conversationId);
+  conversationMessages.value = [];
+  messageHasMore.value = false;
+  messageThreadLoading.value = true;
+  if (updateRoute) await router.replace({ query: { conversation_id: conversationId } });
+  try {
+    const data = await apiGet(`/api/messages/conversations/${conversationId}`, { limit: 50 });
+    conversationMessages.value = data.items || [];
+    messageHasMore.value = Boolean(data.has_more);
+    messageNextBeforeId.value = data.next_before_id;
+    await apiPost(`/api/messages/conversations/${conversationId}/read`, {});
+    await loadMessageConversationList();
+    await scrollMessageThread();
+  } finally { messageThreadLoading.value = false; }
+}
+
+async function loadEarlierMessages() {
+  if (!messageHasMore.value || !messageNextBeforeId.value) return;
+  messageThreadLoading.value = true;
+  const previousHeight = messageThreadEl.value?.scrollHeight || 0;
+  try {
+    const data = await apiGet(`/api/messages/conversations/${selectedConversationId.value}`, { limit: 50, before_id: messageNextBeforeId.value });
+    conversationMessages.value.unshift(...(data.items || []));
+    messageHasMore.value = Boolean(data.has_more);
+    messageNextBeforeId.value = data.next_before_id;
+    await nextTick();
+    if (messageThreadEl.value) messageThreadEl.value.scrollTop = messageThreadEl.value.scrollHeight - previousHeight;
+  } finally { messageThreadLoading.value = false; }
+}
+
+async function sendConversationMessage(payload, resetComposer) {
+  messageSending.value = true;
+  try {
+    const message = await apiPost(`/api/messages/conversations/${selectedConversationId.value}`, payload);
+    conversationMessages.value.push(message);
+    resetComposer();
+    await loadMessageConversationList();
+    await scrollMessageThread();
+  } finally { messageSending.value = false; }
+}
+
+async function loadMessageContacts() {
+  if (messageContactGroups.value.length) return;
+  messageContactsLoading.value = true;
+  try { const data = await apiGet("/api/messages/contacts"); messageContactGroups.value = data.groups || []; }
+  finally { messageContactsLoading.value = false; }
+}
+
+async function openMessageContacts() {
+  showAllMessageContacts.value = false;
+  await loadMessageContacts();
+  messageContactPickerOpen.value = true;
+}
+
+async function startMessageConversation(contact) {
+  const result = await apiPost("/api/messages/conversations/start", { target_user_id: contact.user_id, relation: contact.relation });
+  messageContactPickerOpen.value = false;
+  showAllMessageContacts.value = false;
+  await loadMessageConversationList();
+  await selectMessageConversation(result.conversation_id);
+}
+
+async function switchMessageTab(tab) {
+  messageTab.value = tab;
+  if (tab === "notifications") {
+    selectedConversationId.value = null;
+    await router.replace({ query: {} });
+    return;
+  }
+  const initial = activeConversations.value[0];
+  if (initial) await selectMessageConversation(initial.id);
+  else { selectedConversationId.value = null; await router.replace({ query: {} }); }
+}
+
+function clearPendingQuestion() {
+  pendingQuestionRef.value = null;
+  sessionStorage.removeItem("pending_message_question_ref");
 }
 
 async function loadProfile() {
-  profile.value = await apiGet("/api/profile/summary");
+  [profile.value, abilityMap.value] = await Promise.all([apiGet("/api/profile/summary"), apiGet("/api/profile/ability-map")]);
+}
+
+async function loadWeeklyDigest(messageId) {
+  weeklyDigestLoading.value = true;
+  try {
+    const data = await apiPost("/api/review/weekly-digest", {});
+    weeklyDigest.value = data.digest;
+    weeklyDigestMessageId.value = messageId;
+  } finally { weeklyDigestLoading.value = false; }
+}
+
+function printWeeklyDigest() {
+  document.body.classList.add("weekly-digest-print");
+  const cleanup = () => document.body.classList.remove("weekly-digest-print");
+  window.addEventListener("afterprint", cleanup, { once: true });
+  window.print();
+  window.setTimeout(cleanup, 1000);
 }
 
 async function loadAchievements() {
@@ -370,12 +615,13 @@ async function loadNotes() {
 }
 
 async function loadSettings() {
-  const data = await apiGet("/api/user-goals");
+  const [data, preferences] = await Promise.all([apiGet("/api/user-goals"), apiGet("/api/preferences")]);
   Object.assign(settings, {
     target_stage: data.target_stage || "大一",
     target_course: data.target_course || "高等数学上",
     weekly_hours: Number(data.weekly_hours || 8),
-    exam_date: data.exam_date || ""
+    exam_date: data.exam_date || "",
+    notify_xiaoluo: preferences.notify_xiaoluo !== false
   });
 }
 
@@ -536,12 +782,29 @@ async function saveSettings() {
     weekly_hours: Number(settings.weekly_hours || 8),
     exam_date: settings.exam_date || null
   });
+  await apiPut("/api/preferences", { notify_xiaoluo: settings.notify_xiaoluo });
   settingsSaved.value = true;
 }
 
 watch(() => route.name, loadPage);
 watch(() => user.userId, loadPage);
+watch(() => route.query.conversation_id, async (value) => {
+  const conversationId = Number(value || 0);
+  if (mode.value === "messages" && conversationId && conversationId !== selectedConversationId.value) {
+    if (!messageConversations.value.length) await loadMessageConversationList();
+    await selectMessageConversation(conversationId, false);
+  }
+});
 onMounted(loadPage);
 </script>
 
 <style scoped src="../styles/views/side-feature.css"></style>
+<style>
+@media print {
+  body.weekly-digest-print * { visibility: hidden !important; }
+  body.weekly-digest-print .weekly-digest-card,
+  body.weekly-digest-print .weekly-digest-card * { visibility: visible !important; }
+  body.weekly-digest-print .weekly-digest-card { position: absolute; inset: 0; margin: 0; color: #33302b; border: 0; background: #fff; }
+  body.weekly-digest-print .weekly-digest-card header button { display: none; }
+}
+</style>

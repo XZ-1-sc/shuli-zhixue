@@ -243,6 +243,34 @@ async def upload_question_images(
     return {"files": uploaded, "max_files": MAX_FILES_PER_REQUEST}
 
 
+@router.post("/uploads/message-images", status_code=status.HTTP_201_CREATED)
+async def upload_message_images(
+    files: list[UploadFile] = File(...),
+    current: dict[str, Any] = Depends(current_session_user),
+) -> dict[str, Any]:
+    if current["role"] not in {"student", "teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="当前账号不能上传消息图片。")
+    if not files or len(files) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(status_code=422, detail=f"每次最多上传 {MAX_FILES_PER_REQUEST} 张图片。")
+    uploaded: list[dict[str, Any]] = []
+    for file in files:
+        raw = await file.read(settings.max_answer_image_bytes + 1)
+        original_name = file.filename or "消息图片"
+        await file.close()
+        if not raw:
+            raise HTTPException(status_code=422, detail="不能上传空图片。")
+        if len(raw) > settings.max_answer_image_bytes:
+            raise HTTPException(status_code=413, detail="单张图片不能超过 8 MB。")
+        normalized, extension, mime_type, width, height = _normalize_image(raw)
+        uploaded.append(
+            _store_upload(
+                user_id=int(current["id"]), original_name=original_name, normalized=normalized,
+                extension=extension, mime_type=mime_type, width=width, height=height, folder="messages",
+            )
+        )
+    return {"files": uploaded, "max_files": MAX_FILES_PER_REQUEST}
+
+
 @router.post("/uploads/note-files", status_code=status.HTTP_201_CREATED)
 async def upload_note_files(
     user_id: int = Form(ge=1),
@@ -354,6 +382,28 @@ async def read_uploaded_file(
                 ).first()
             )
     if not can_read:
+        with SessionLocal() as db:
+            can_read = bool(
+                db.execute(
+                    text(
+                        """
+                        SELECT 1
+                        FROM messages m JOIN conversations c ON c.id=m.conversation_id
+                        WHERE m.attachment_ids IS NOT NULL
+                          AND JSON_CONTAINS(m.attachment_ids,:file_json,'$')
+                          AND (c.participant_a=:user_id OR c.participant_b=:user_id)
+                          AND (:is_teacher=0 OR c.relation='teacher_student')
+                        LIMIT 1
+                        """
+                    ),
+                    {
+                        "file_json": str(file_id),
+                        "user_id": int(current["id"]),
+                        "is_teacher": 1 if current["role"] in {"teacher", "admin"} else 0,
+                    },
+                ).first()
+            )
+    if not can_read:
         raise HTTPException(status_code=403, detail="你没有权限查看这个文件。")
 
     root = _upload_root()
@@ -388,10 +438,15 @@ async def delete_unlinked_upload(
                 LEFT JOIN note_attachments AS na ON na.uploaded_file_id = uf.id
                 WHERE uf.id = :file_id AND uf.user_id = :user_id
                   AND aa.id IS NULL AND qa.id IS NULL AND na.id IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM messages m
+                    WHERE m.attachment_ids IS NOT NULL
+                      AND JSON_CONTAINS(m.attachment_ids,:file_json,'$')
+                  )
                 LIMIT 1
                 """
             ),
-            {"file_id": file_id, "user_id": user_id},
+            {"file_id": file_id, "user_id": user_id, "file_json": str(file_id)},
         ).mappings().first()
         if not row:
             raise HTTPException(status_code=409, detail="文件不存在，或已绑定到内容记录。")

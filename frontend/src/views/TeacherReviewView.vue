@@ -13,8 +13,18 @@
           <option value="graded">已批改</option>
         </select>
       </label>
+      <button
+        v-if="reviewStatus === 'pending' && items.length"
+        class="teacher-secondary-action teacher-batch-draft-action"
+        type="button"
+        :disabled="batchGenerating"
+        @click="batchGenerateComments"
+      >
+        {{ batchGenerating ? "正在生成草稿…" : "✦ 为待批改列表生成草稿" }}
+      </button>
       <button class="teacher-primary-action" type="button" @click="load">刷新队列</button>
     </section>
+    <p v-if="batchHint" class="teacher-batch-hint" :class="{ 'is-error': batchError }">{{ batchHint }}</p>
 
     <div v-if="loading" class="teacher-loading-grid"><i v-for="n in 6" :key="n"></i></div>
     <section v-else-if="error" class="teacher-state-panel is-error">
@@ -41,6 +51,10 @@
             <small>{{ item.assignment_title || "日常练习" }}</small>
             <strong>{{ item.username }} · {{ item.course }}</strong>
             <em>{{ item.knowledge_tag }} · {{ formatTime(item.answered_at) }}</em>
+            <em v-if="flags[item.id]?.needs_attention" class="teacher-review-flag">
+              需复核 · {{ flags[item.id].reasons.join(" / ") }}
+            </em>
+            <em v-else-if="batchDrafts[item.id]" class="teacher-review-draft-ready">AI 草稿已备</em>
           </div>
           <b>{{ item.attachments.length ? `${item.attachments.length} 图` : "文字" }}</b>
         </button>
@@ -83,9 +97,10 @@
             <button v-for="score in scorePresets" :key="score" type="button" @click="gradeForm.score = score">{{ score }} 分</button>
           </div>
           <label class="span-all">
-            <span>教师评语</span>
+            <span class="teacher-feedback-label">教师评语 <button type="button" :disabled="generatingComment" @click="generateComment">{{ generatingComment ? "小逻生成中…" : "✦ 小逻生成评语" }}</button></span>
             <textarea v-model="gradeForm.feedback" rows="4" required placeholder="指出做得好的地方、错误原因和下一步建议"></textarea>
           </label>
+          <p v-if="commentHint" class="teacher-ai-draft-hint span-all">{{ commentHint }}</p>
           <div class="teacher-quick-feedback span-all">
             <span>快捷评语</span>
             <div><button v-for="comment in quickComments" :key="comment" type="button" @click="appendComment(comment)">{{ comment }}</button></div>
@@ -141,6 +156,13 @@ const selected = ref(null);
 const reviewStatus = ref("pending");
 const grading = ref(false);
 const gradeError = ref("");
+const generatingComment = ref(false);
+const commentHint = ref("");
+const flags = ref({});
+const batchDrafts = ref({});
+const batchGenerating = ref(false);
+const batchHint = ref("");
+const batchError = ref(false);
 const previewFile = ref(null);
 const previewRotation = ref(0);
 const previewScale = ref(1);
@@ -154,9 +176,40 @@ function typeLabel(value) { return ({ choice: "选择题", blank: "填空题", c
 function select(item) {
   selected.value = item;
   gradeForm.score = item?.teacher_score ?? item?.score ?? 80;
-  gradeForm.feedback = item?.teacher_feedback || "";
+  gradeForm.feedback = item?.teacher_feedback || batchDrafts.value[item?.id] || "";
   gradeForm.correction_required = false;
   gradeError.value = "";
+  commentHint.value = "";
+}
+
+async function batchGenerateComments() {
+  const recordIds = items.value.slice(0, 20).map((item) => item.id);
+  if (!recordIds.length) return;
+  batchGenerating.value = true;
+  batchHint.value = "";
+  batchError.value = false;
+  try {
+    const data = await apiPost("/api/teacher/ai/grade-comment", { record_ids: recordIds });
+    batchDrafts.value = Object.fromEntries((data.items || []).map((item) => [item.record_id, item.comment?.draft || ""]));
+    if (selected.value && batchDrafts.value[selected.value.id]) gradeForm.feedback = batchDrafts.value[selected.value.id];
+    batchHint.value = `已为 ${data.count || 0} 条作答生成可编辑草稿，草稿不会自动提交。`;
+  } catch (exception) {
+    batchError.value = true;
+    batchHint.value = exception.message;
+  } finally { batchGenerating.value = false; }
+}
+
+async function generateComment() {
+  if (!selected.value) return;
+  generatingComment.value = true;
+  commentHint.value = "";
+  try {
+    const data = await apiPost("/api/teacher/ai/grade-comment", { record_id: selected.value.id, draft_score: gradeForm.score });
+    gradeForm.feedback = data.comment?.draft || gradeForm.feedback;
+    commentHint.value = "小逻已生成可编辑草稿；确认内容无误后再提交批改。";
+  } catch (exception) {
+    commentHint.value = exception.message;
+  } finally { generatingComment.value = false; }
 }
 
 function appendComment(comment) {
@@ -177,11 +230,14 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const data = await apiGet("/api/teacher/review-queue", {
+    const queueRequest = apiGet("/api/teacher/review-queue", {
       assignment_id: route.query.assignment_id || "",
       review_status: reviewStatus.value
     });
-    items.value = data.items || [];
+    const flagRequest = reviewStatus.value === "pending" ? apiGet("/api/teacher/review/flag") : Promise.resolve({ items: [] });
+    const [data, flagData] = await Promise.all([queueRequest, flagRequest]);
+    flags.value = Object.fromEntries((flagData.items || []).map((item) => [item.record_id, item]));
+    items.value = [...(data.items || [])].sort((left, right) => (flags.value[right.id]?.priority || 0) - (flags.value[left.id]?.priority || 0));
     select(items.value[0] || null);
   } catch (exception) {
     error.value = exception.message;
@@ -206,3 +262,7 @@ async function grade() {
 onMounted(() => { window.addEventListener("keydown", handleKeydown); load(); });
 onUnmounted(() => window.removeEventListener("keydown", handleKeydown));
 </script>
+
+<style scoped>
+.teacher-feedback-label{display:flex;justify-content:space-between;gap:12px;align-items:center}.teacher-feedback-label button{min-height:30px;padding:0 10px;border:1px solid rgba(46, 125, 140, 0.35);border-radius:8px;color:#287381;background:rgba(46, 125, 140, 0.07);font-size:11px;font-weight:850}.teacher-ai-draft-hint{margin:0;color:#287381;font-size:11px}
+</style>

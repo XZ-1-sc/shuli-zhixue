@@ -133,12 +133,18 @@
 </template>
 
 <script setup>
-import * as echarts from "echarts";
+import { GraphChart } from "echarts/charts";
+import { TooltipComponent } from "echarts/components";
+import { init, use } from "echarts/core";
+import { LabelLayout } from "echarts/features";
+import { CanvasRenderer } from "echarts/renderers";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 
 import { apiGet } from "../api/client";
 import { useUserStore } from "../stores/user";
+
+use([GraphChart, TooltipComponent, LabelLayout, CanvasRenderer]);
 
 const user = useUserStore();
 const graphEl = ref(null);
@@ -188,10 +194,10 @@ const heatItems = computed(() => (diagnosis.value.weak_points || []).slice(0, 5)
 const topWeak = computed(() => heatItems.value[0]);
 
 function nodeColor(status) {
-  if (status === "good") return "#6ed991";
-  if (status === "medium") return "#54d8ea";
-  if (status === "weak") return "#f3ad49";
-  return "#8b9aa3";
+  if (status === "good") return "#3f8f66";
+  if (status === "medium") return "#2e7d8c";
+  if (status === "weak") return "#b07d1e";
+  return "#7d786e";
 }
 
 function statusText(status) {
@@ -295,7 +301,7 @@ function renderGraph() {
   }
   observeGraphSize();
   if (!chart) {
-    chart = echarts.init(graphEl.value, null, { width, height });
+    chart = init(graphEl.value, null, { width, height });
     chart.on("click", (event) => {
       if (event.dataType === "node") {
         selectedNode.value = event.data.raw;
@@ -336,7 +342,7 @@ function renderGraph() {
         emphasis: { focus: "adjacency", label: { show: true, formatter: "{b}" } },
         edgeSymbol: ["none", "arrow"],
         edgeSymbolSize: 7,
-        lineStyle: { color: "rgba(191, 220, 226, 0.36)", curveness: 0.12 },
+        lineStyle: { color: "rgba(100, 90, 70, 0.36)", curveness: 0.12 },
         data: visibleNodes.value.map((node) => ({
           x: positions.get(node.id)?.[0] || 0,
           y: positions.get(node.id)?.[1] || 0,
@@ -358,7 +364,7 @@ function renderGraph() {
           raw: node,
           itemStyle: {
             color: nodeColor(node.mastery_status),
-            borderColor: "rgba(238, 247, 246, 0.72)",
+            borderColor: "rgba(51, 48, 43, 0.72)",
             borderWidth: node.category === "stage" ? 2 : 1
           }
         })),
@@ -370,24 +376,27 @@ function renderGraph() {
 
 async function loadGraph() {
   loadingGraph.value = true;
-  const data = await apiGet("/api/knowledge-graph", {
-    stage: selectedStage.value,
-    course: selectedCourse.value
-  });
-  graphData.value = data;
-  selectedNode.value = null;
-  loadingGraph.value = false;
-  await nextTick();
-  renderGraph();
+  try {
+    const data = await apiGet("/api/knowledge-graph", {
+      stage: selectedStage.value,
+      course: selectedCourse.value
+    });
+    graphData.value = data;
+    selectedNode.value = null;
+    await nextTick();
+    renderGraph();
+  } finally {
+    loadingGraph.value = false;
+  }
 }
 
 async function loadAll() {
-  const stageData = await apiGet("/api/stages");
+  const stageData = await apiGet("/api/stages").catch(() => ({ stages: [] }));
   stages.value = stageData.stages || [];
-  await loadGraph();
+  await loadGraph().catch(() => null);
   if (user.userId) {
     const [diagnoseData, wrongData] = await Promise.all([
-      apiGet("/api/diagnose"),
+      apiGet("/api/diagnose").catch(() => ({ weak_points: [], recent_record_count: 0 })),
       apiGet("/api/review/wrong-questions", { limit: 10 }).catch(() => ({ items: [] }))
     ]);
     diagnosis.value = diagnoseData;

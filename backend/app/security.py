@@ -56,6 +56,8 @@ def revoke_auth_session_sync(token: str | None) -> None:
 
 
 def current_session_user(request: Request) -> dict[str, Any]:
+    if "user_id" in request.query_params:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="会话接口不接受 user_id，请使用当前登录账号。")
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="登录状态已失效，请重新登录。")

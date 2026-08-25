@@ -8,11 +8,15 @@ from .api.routes.assignments import router as assignments_router
 from .api.routes.chat import router as chat_router
 from .api.routes.diagnosis import router as diagnosis_router
 from .api.routes.health import router as health_router
+from .api.routes.messages import router as messages_router
 from .api.routes.practice import router as practice_router
 from .api.routes.profile import router as profile_router
 from .api.routes.stages import router as stages_router
 from .api.routes.teacher import router as teacher_router
+from .api.routes.teacher_advice import router as teacher_advice_router
+from .api.routes.teacher_analytics import router as teacher_analytics_router
 from .api.routes.teacher_assignments import router as teacher_assignments_router
+from .api.routes.teacher_ai import router as teacher_ai_router
 from .api.routes.teacher_questions import router as teacher_questions_router
 from .api.routes.teacher_review import router as teacher_review_router
 from .api.routes.teacher_students import router as teacher_students_router
@@ -45,6 +49,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 app.include_router(health_router)
+app.include_router(messages_router)
 app.include_router(stages_router)
 app.include_router(practice_router)
 app.include_router(assessment_router)
@@ -53,9 +58,12 @@ app.include_router(profile_router)
 app.include_router(chat_router)
 app.include_router(uploads_router)
 app.include_router(teacher_router)
+app.include_router(teacher_advice_router)
+app.include_router(teacher_analytics_router)
 app.include_router(teacher_students_router)
 app.include_router(teacher_questions_router)
 app.include_router(teacher_assignments_router)
+app.include_router(teacher_ai_router)
 app.include_router(teacher_review_router)
 app.include_router(assignments_router)
 
@@ -77,6 +85,7 @@ async def offline_docs() -> HTMLResponse:
         ("GET", "/api/question-types", "题型与知识点统计"),
         ("GET", "/api/practice/random", "随机抽题"),
         ("POST", "/api/practice/submit", "提交答案并返回解析"),
+        ("POST", "/api/practice/ai-similar", "生成 1-2 道临时 AI 同类变式题"),
         ("POST", "/api/uploads/answer-images", "上传作答图片"),
         ("POST", "/api/uploads/note-files", "上传笔记图片或文件"),
         ("POST", "/api/assessment/start", "开始或继续基础首测"),
@@ -84,8 +93,19 @@ async def offline_docs() -> HTMLResponse:
         ("GET", "/api/recommend", "当前会话账号的今日练习推荐"),
         ("GET", "/api/study-roadmap", "当前会话账号的完整学习规划"),
         ("GET", "/api/review/wrong-questions", "当前会话账号的错题复盘"),
+        ("GET", "/api/review/analysis", "当前学生的 AI 错因报告"),
+        ("POST", "/api/review/weekly-digest", "生成学生 AI 一页纸周报"),
+        ("GET", "/api/learning-insights", "当前学生的学习热力与掌握趋势"),
+        ("GET", "/api/negotiation/recent", "最近一次多智能体协商过程"),
         ("GET", "/api/messages", "当前会话账号的消息中心"),
+        ("GET", "/api/messages/contacts", "当前账号可联系的教师、学生或同学"),
+        ("GET", "/api/messages/conversations", "统一会话列表与未读数"),
+        ("POST", "/api/messages/conversations/start", "按有效师生或同教师网络关系发起会话"),
+        ("POST", "/api/uploads/message-images", "上传消息图片"),
+        ("GET", "/api/notifications/summary", "小逻通知摘要与陪伴状态"),
+        ("GET", "/api/preferences", "当前账号的小逻提醒偏好"),
         ("GET", "/api/profile/summary", "当前会话账号的学习档案"),
+        ("GET", "/api/profile/ability-map", "知识点、题型与错因能力图谱"),
         ("GET", "/api/achievements", "当前会话账号的成就徽章"),
         ("GET", "/api/resources", "课程资源"),
         ("GET", "/api/notes", "当前会话账号的笔记列表"),
@@ -94,6 +114,11 @@ async def offline_docs() -> HTMLResponse:
         ("DELETE", "/api/notes/{note_id}", "删除笔记"),
         ("POST", "/api/chat", "小逻流式对话"),
         ("GET", "/api/chat/history", "当前会话账号的对话历史"),
+        ("POST", "/api/teacher/ai/grade-comment", "教师批改评语草稿"),
+        ("POST", "/api/teacher/ai/class-insight", "教师班级或学生学情解读"),
+        ("POST", "/api/teacher/ai/assignment-suggestion", "教师组卷建议草稿"),
+        ("GET", "/api/teacher/review/flag", "教师待批改异常复核标记"),
+        ("GET", "/api/teacher/tickets", "教师学生求助工单"),
         ("JSON", "/openapi.json", "OpenAPI JSON"),
     ]
     endpoint_html = "\n".join(

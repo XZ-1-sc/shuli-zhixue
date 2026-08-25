@@ -1,3 +1,6 @@
+import json
+from collections import Counter, defaultdict
+from datetime import date, timedelta
 from typing import Any
 
 from fastapi import HTTPException
@@ -6,14 +9,54 @@ from sqlalchemy import text
 from ..session import SessionLocal
 from ...api.schemas import NoteRequest, NoteUpdateRequest
 from ...api.utils import _json_safe
+from ...services.notification_service import _notification_payload
 from .common import _get_user_exists
 from .diagnosis import _diagnose_sync, _get_goal_sync, _recent_records_sync
 
 
-def _messages_sync(user_id: int) -> dict[str, Any]:
+def _ensure_weekly_report_sync(user_id: int) -> None:
+    week_start = date.today() - timedelta(days=date.today().weekday())
+    diagnosis = _diagnose_sync(user_id)
+    records = _recent_records_sync(user_id, 500)
+    this_week = [record for record in records if str(record.get("answered_at") or "")[:10] >= week_start.isoformat()]
+    if not this_week:
+        return
+    graded = [record for record in this_week if record.get("is_correct") is not None]
+    accuracy = round(sum(1 for record in graded if record.get("is_correct")) / len(graded) * 100, 1) if graded else 0
+    weakest = (diagnosis.get("weak_points") or [{}])[0]
+    focus = weakest.get("fine_tag") or weakest.get("knowledge_tag") or "保持当前学习节奏"
+    content = f"本周完成 {len(this_week)} 次作答，已评分正确率 {accuracy:g}%。下周建议优先补强：{focus}。"
+    with SessionLocal() as db:
+        exists = db.execute(
+            text(
+                """
+                SELECT 1 FROM user_notifications
+                WHERE user_id = :user_id AND type = 'weekly_report' AND created_at >= :week_start
+                LIMIT 1
+                """
+            ),
+            {"user_id": user_id, "week_start": week_start},
+        ).first()
+        if exists:
+            return
+        db.execute(
+            text(
+                """
+                INSERT INTO user_notifications (user_id, type, title, content, action_url)
+                VALUES (:user_id, 'weekly_report', '本周学习报告', :content, '/profile')
+                """
+            ),
+            {"user_id": user_id, "content": content},
+        )
+        db.commit()
+
+
+def _messages_sync(user_id: int, *, ensure_weekly: bool = True) -> dict[str, Any]:
+    if ensure_weekly:
+        _ensure_weekly_report_sync(user_id)
     query = text(
         """
-        SELECT id, type, title, content, is_read, created_at
+        SELECT id, type, title, content, action_url, is_read, created_at
         FROM user_notifications
         WHERE user_id = :user_id OR user_id IS NULL
         ORDER BY is_read ASC, created_at DESC, id DESC
@@ -22,17 +65,7 @@ def _messages_sync(user_id: int) -> dict[str, Any]:
     )
     with SessionLocal() as db:
         rows = db.execute(query, {"user_id": user_id}).mappings().all()
-    items = [
-        {
-            "id": int(row["id"]),
-            "type": str(row["type"]),
-            "title": str(row["title"]),
-            "content": str(row["content"]),
-            "is_read": bool(row["is_read"]),
-            "created_at": _json_safe(row["created_at"]),
-        }
-        for row in rows
-    ]
+    items = [_notification_payload(row) for row in rows]
     return {"user_id": user_id, "unread_count": sum(1 for item in items if not item["is_read"]), "items": items}
 
 def _profile_summary_sync(user_id: int) -> dict[str, Any]:
@@ -89,6 +122,82 @@ def _profile_summary_sync(user_id: int) -> dict[str, Any]:
         },
         "weak_points": diagnosis.get("weak_points", [])[:5],
         "recent_records": recent_records,
+    }
+
+
+def _ability_map_sync(user_id: int) -> dict[str, Any]:
+    with SessionLocal() as db:
+        rows = db.execute(
+            text(
+                """
+                SELECT pr.is_correct, pr.mistake_tags, q.knowledge_tag, q.fine_tag, q.question_type
+                FROM practice_records AS pr
+                JOIN questions AS q ON q.id=pr.question_id
+                WHERE pr.user_id=:user_id AND pr.is_correct IS NOT NULL
+                ORDER BY pr.answered_at DESC, pr.id DESC LIMIT 1000
+                """
+            ),
+            {"user_id": user_id},
+        ).mappings().all()
+    totals: dict[tuple[str, str], dict[str, int]] = defaultdict(lambda: {"total": 0, "correct": 0})
+    reasons: Counter[tuple[str, str, str]] = Counter()
+    reason_totals: Counter[str] = Counter()
+    for row in rows:
+        knowledge = str(row["fine_tag"] or row["knowledge_tag"])
+        question_type = str(row["question_type"])
+        totals[(knowledge, question_type)]["total"] += 1
+        if bool(row["is_correct"]):
+            totals[(knowledge, question_type)]["correct"] += 1
+            continue
+        raw_tags = row["mistake_tags"]
+        if isinstance(raw_tags, str):
+            try:
+                raw_tags = json.loads(raw_tags)
+            except json.JSONDecodeError:
+                raw_tags = [raw_tags]
+        tags = [str(tag) for tag in (raw_tags or ["未标注错因"]) if str(tag).strip()][:5]
+        for reason in tags or ["未标注错因"]:
+            reasons[(knowledge, question_type, reason)] += 1
+            reason_totals[reason] += 1
+    cells = []
+    for (knowledge, question_type, reason), count in reasons.most_common(80):
+        stat = totals[(knowledge, question_type)]
+        cells.append(
+            {
+                "knowledge": knowledge,
+                "type": question_type,
+                "reason": reason,
+                "count": count,
+                "attempts": stat["total"],
+                "accuracy": round(stat["correct"] / stat["total"], 3) if stat["total"] else 0,
+            }
+        )
+    if not cells:
+        for (knowledge, question_type), stat in list(totals.items())[:30]:
+            cells.append(
+                {
+                    "knowledge": knowledge,
+                    "type": question_type,
+                    "reason": "暂未发现稳定错因",
+                    "count": 0,
+                    "attempts": stat["total"],
+                    "accuracy": round(stat["correct"] / stat["total"], 3) if stat["total"] else 0,
+                }
+            )
+    dominant_reason = reason_totals.most_common(1)[0][0] if reason_totals else None
+    advice_by_reason = {
+        "计算失误": "建议先练笔算规范与步骤化草稿，每一步保留符号检查。",
+        "概念未掌握": "先用定义和反例确认概念边界，再做基础变式题。",
+        "思路断点": "把题目拆成已知、目标和可用定理三栏后再开始推导。",
+        "审题失误": "圈出条件、量词和最终要求，答完后逐项回看。",
+    }
+    advice = advice_by_reason.get(dominant_reason, "按出现频率最高的错因做专项练习，并在一周后复测。")
+    return {
+        "dimensions": ["knowledge", "type", "reason"],
+        "cells": cells,
+        "dominant_reason": dominant_reason,
+        "advice": advice,
+        "record_count": len(rows),
     }
 
 def _achievements_sync(user_id: int) -> dict[str, Any]:

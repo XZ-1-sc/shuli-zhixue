@@ -40,6 +40,32 @@
               <div><small>待批改</small><strong>{{ summary.pending_review }}</strong><p>图片或主观答案</p></div>
             </article>
           </section>
+          <p v-if="aiError" class="teacher-form-message is-error">{{ aiError }}</p>
+
+          <section v-if="tickets.length" class="teacher-panel teacher-ticket-panel">
+            <header>
+              <div><strong>学生求助工单</strong><small>小逻识别到需要教师介入的问题</small></div>
+              <span>{{ unreadTickets }} 条待回复</span>
+            </header>
+            <div class="teacher-ticket-list">
+              <article v-for="ticket in tickets" :key="ticket.id" :class="{ resolved: ticket.is_read }">
+                <div>
+                  <small>{{ ticket.metadata?.student_name || "班级学生" }} · {{ formatTime(ticket.created_at) }}</small>
+                  <strong>{{ ticket.title }}</strong>
+                  <p>{{ ticket.content }}</p>
+                  <RouterLink v-if="ticket.metadata?.student_id" :to="`/teacher/students/${ticket.metadata.student_id}`">查看学生档案</RouterLink>
+                </div>
+                <form v-if="!ticket.is_read" @submit.prevent="replyTicket(ticket)">
+                  <textarea v-model="ticketReplies[ticket.id]" rows="3" maxlength="2000" placeholder="给学生一个明确、可执行的回复" required></textarea>
+                  <button class="teacher-primary-action" type="submit" :disabled="replyingTicketId === ticket.id">
+                    {{ replyingTicketId === ticket.id ? "发送中…" : "回复并关闭工单" }}
+                  </button>
+                </form>
+                <span v-else class="teacher-ticket-resolved">已回复</span>
+              </article>
+            </div>
+          </section>
+          <p v-if="ticketError" class="teacher-form-message is-error">{{ ticketError }}</p>
 
           <section v-if="!summary.class_count" class="teacher-empty-onboarding">
             <div class="empty-compass">Σ</div>
@@ -56,10 +82,10 @@
                 <div class="teacher-line-chart">
                   <div class="chart-grid-lines"><i v-for="n in 5" :key="n"></i></div>
                   <svg viewBox="0 0 700 220" preserveAspectRatio="none" aria-label="最近七天学习趋势">
-                    <polyline :points="activeLine" fill="none" stroke="#64d7e8" stroke-width="4" vector-effect="non-scaling-stroke" />
-                    <polyline :points="accuracyLine" fill="none" stroke="#70e0aa" stroke-width="3" stroke-dasharray="8 7" vector-effect="non-scaling-stroke" />
-                    <circle v-for="point in activePoints" :key="`a-${point.x}`" :cx="point.x" :cy="point.y" r="5" fill="#64d7e8" />
-                    <circle v-for="point in accuracyPoints" :key="`r-${point.x}`" :cx="point.x" :cy="point.y" r="4" fill="#70e0aa" />
+                    <polyline :points="activeLine" fill="none" stroke="#2e7d8c" stroke-width="4" vector-effect="non-scaling-stroke" />
+                    <polyline :points="accuracyLine" fill="none" stroke="#3f8f66" stroke-width="3" stroke-dasharray="8 7" vector-effect="non-scaling-stroke" />
+                    <circle v-for="point in activePoints" :key="`a-${point.x}`" :cx="point.x" :cy="point.y" r="5" fill="#2e7d8c" />
+                    <circle v-for="point in accuracyPoints" :key="`r-${point.x}`" :cx="point.x" :cy="point.y" r="4" fill="#3f8f66" />
                   </svg>
                   <div class="chart-labels"><span v-for="item in overview.trend" :key="item.date">{{ item.label }}</span></div>
                 </div>
@@ -119,6 +145,7 @@
                   <strong>{{ item.name }}</strong>
                   <span>{{ item.student_count }} 名学生 · 今日 {{ item.active_today }} 人活跃</span>
                   <b>进入班级 →</b>
+                  <button type="button" :disabled="insightLoadingId === item.id" @click.prevent.stop="generateClassInsight(item)">{{ insightLoadingId === item.id ? "分析中…" : "✦ AI 解读" }}</button>
                 </RouterLink>
               </div>
             </section>
@@ -128,20 +155,27 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { RouterLink } from "vue-router";
 
-import { apiGet } from "../api/client";
+import { apiGet, apiPost } from "../api/client";
 import PageHeader from "../components/ui/PageHeader.vue";
 
 const loading = ref(true);
 const error = ref("");
+const aiError = ref("");
+const insightLoadingId = ref(null);
+const tickets = ref([]);
+const ticketReplies = reactive({});
+const replyingTicketId = ref(null);
+const ticketError = ref("");
 const overview = ref({
   summary: { class_count: 0, student_count: 0, active_today: 0, pending_review: 0, accuracy: 0 },
   classes: [], trend: [], course_mastery: [], attention_students: [], recent_activity: []
 });
 
 const summary = computed(() => overview.value.summary);
+const unreadTickets = computed(() => tickets.value.filter((ticket) => !ticket.is_read).length);
 function linePoints(key, maxValue) {
   const items = overview.value.trend || [];
   return items.map((item, index) => ({
@@ -176,7 +210,12 @@ async function loadOverview() {
   loading.value = true;
   error.value = "";
   try {
-    overview.value = await apiGet("/api/teacher/overview");
+    const [overviewData, ticketData] = await Promise.all([
+      apiGet("/api/teacher/overview"),
+      apiGet("/api/teacher/tickets")
+    ]);
+    overview.value = overviewData;
+    tickets.value = ticketData.items || [];
   } catch (requestError) {
     error.value = requestError.message || "教师数据接口暂时不可用。";
   } finally {
@@ -184,5 +223,37 @@ async function loadOverview() {
   }
 }
 
+async function replyTicket(ticket) {
+  const content = String(ticketReplies[ticket.id] || "").trim();
+  if (!content) return;
+  replyingTicketId.value = ticket.id;
+  ticketError.value = "";
+  try {
+    await apiPost(`/api/teacher/tickets/${ticket.id}/reply`, { content });
+    ticketReplies[ticket.id] = "";
+    const data = await apiGet("/api/teacher/tickets");
+    tickets.value = data.items || [];
+  } catch (exception) {
+    ticketError.value = exception.message;
+  } finally { replyingTicketId.value = null; }
+}
+
+async function generateClassInsight(item) {
+  insightLoadingId.value = item.id;
+  aiError.value = "";
+  try {
+    const data = await apiPost("/api/teacher/ai/class-insight", { scope: "class", class_id: item.id });
+    window.dispatchEvent(new CustomEvent("xiaoluo:open", { detail: {
+      card: { ...data.card, title: `${item.name} · AI 学情解读` },
+      prompt: `请结合 ${item.name} 的这份分析，说明下一步教学重点。`,
+      autoSend: true
+    } }));
+  } catch (exception) { aiError.value = exception.message; } finally { insightLoadingId.value = null; }
+}
+
 onMounted(loadOverview);
 </script>
+
+<style scoped>
+.teacher-class-strip>div>a{position:relative}.teacher-class-strip>div>a>button{position:absolute;right:14px;top:14px;min-height:30px;padding:0 9px;border:1px solid rgba(46, 125, 140, 0.3);border-radius:8px;color:#287381;background: rgba(255, 255, 255, 0.94);font-size:11px;font-weight:850}
+</style>

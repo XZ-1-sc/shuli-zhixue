@@ -30,6 +30,7 @@ const navItems = [
   { key: "students", to: "/teacher/students", icon: "♙", label: "学生学情" },
   { key: "questions", to: "/teacher/questions", icon: "▤", label: "题库管理" },
   { key: "assignments", to: "/teacher/assignments", icon: "▧", label: "作业管理" },
+  { key: "messages", to: "/teacher/messages", icon: "◇", label: "消息中心" },
   { key: "review", to: "/teacher/review", icon: "✓", label: "批改中心" }
 ];
 </script>

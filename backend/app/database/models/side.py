@@ -44,6 +44,20 @@ class UserNotification(IdMixin, CreatedAtMixin, Base):
     is_read: Mapped[int] = mapped_column(TINYINT(1), nullable=False, server_default=text("0"))
 
 
+class UserPreference(IdMixin, TimestampMixin, Base):
+    __tablename__ = "user_preferences"
+    __table_args__ = (
+        UniqueConstraint("user_id", "key", name="uk_user_preferences_user_key"),
+        Index("idx_user_preferences_user", "user_id"),
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False
+    )
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    value: Mapped[str] = mapped_column(String(512), nullable=False)
+
+
 class LearningResource(IdMixin, CreatedAtMixin, Base):
     __tablename__ = "learning_resources"
     __table_args__ = (

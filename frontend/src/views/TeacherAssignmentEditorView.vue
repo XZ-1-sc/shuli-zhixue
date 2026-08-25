@@ -34,10 +34,16 @@
           <div><strong>按班级智能抽题</strong><small>按所选班级的阶段与课程，从已发布中文题库中随机抽取，已有选择会保留。</small></div>
           <label><span>数量</span><input v-model.number="randomCount" type="number" min="1" max="50" /></label>
           <button class="teacher-secondary-action" type="button" :disabled="randomizing" @click="randomSelect">{{ randomizing ? "抽取中…" : "随机选题" }}</button>
+          <button class="teacher-ai-paper-action" type="button" :disabled="suggesting" @click="requestSuggestion">{{ suggesting ? "分析中…" : "✦ AI 建议组卷" }}</button>
           <button class="teacher-upload-paper-action" type="button" @click="openPaperImport">⇧ 上传试卷</button>
           <button type="button" :disabled="!selectedIds.length" @click="clearSelection">清空选择</button>
         </div>
         <p v-if="randomMessage" class="teacher-form-message" :class="{ 'is-error': randomError }">{{ randomMessage }}</p>
+        <section v-if="aiSuggestion" class="teacher-ai-paper-card">
+          <div><small>小逻组卷草稿</small><strong>{{ aiSuggestion.rationale }}</strong></div>
+          <ul><li v-for="item in aiSuggestion.knowledge_tags" :key="item.tag"><span>{{ item.tag }}</span><b>{{ item.count }} 题</b><em>难度 {{ item.difficulty }}</em></li></ul>
+          <button type="button" :disabled="applyingSuggestion" @click="applySuggestion">{{ applyingSuggestion ? "正在匹配题库…" : "确认并加入候选题" }}</button>
+        </section>
         <div v-if="loading" class="teacher-inline-empty">正在加载已发布题目…</div>
         <div v-else class="teacher-picker-list">
           <label v-for="item in questions" :key="item.id" :class="{ selected: selectedIds.includes(item.id) }">
@@ -82,6 +88,9 @@ const randomizing = ref(false);
 const randomMessage = ref("");
 const randomError = ref(false);
 const paperImportOpen = ref(false);
+const suggesting = ref(false);
+const applyingSuggestion = ref(false);
+const aiSuggestion = ref(null);
 const loading = ref(true);
 const saving = ref(false);
 const error = ref("");
@@ -155,6 +164,33 @@ async function randomSelect() {
   } finally {
     randomizing.value = false;
   }
+}
+
+async function requestSuggestion() {
+  if (!selectedClass.value) { randomError.value = true; randomMessage.value = "请先选择班级。"; return; }
+  suggesting.value = true; randomMessage.value = "";
+  try { const data = await apiPost("/api/teacher/ai/assignment-suggestion", { class_id: Number(form.class_id), question_count: Number(randomCount.value || 10) }); aiSuggestion.value = data.suggestion; }
+  catch (exception) { randomError.value = true; randomMessage.value = exception.message; }
+  finally { suggesting.value = false; }
+}
+
+async function applySuggestion() {
+  if (!aiSuggestion.value) return;
+  applyingSuggestion.value = true; randomError.value = false;
+  try {
+    const picked = [];
+    for (const item of aiSuggestion.value.knowledge_tags || []) {
+      const data = await apiGet("/api/teacher/questions", { scope: "all", publish_status: "published", stage: selectedClass.value.stage, course: selectedClass.value.course, search: item.tag, page: 1, page_size: Math.min(100, Math.max(20, item.count * 4)) });
+      picked.push(...(data.items || []).filter((question) => Number(question.difficulty) <= Number(item.difficulty) + 1).slice(0, item.count));
+    }
+    const ids = picked.map((item) => Number(item.id));
+    selectedIds.value = Array.from(new Set([...selectedIds.value.map(Number), ...ids])).slice(0, 100);
+    questions.value = [...picked, ...questions.value.filter((item) => !ids.includes(Number(item.id)))];
+    picked.forEach((item) => { if (!pointMap[item.id]) pointMap[item.id] = 10; });
+    randomMessage.value = `已按 AI 草稿加入 ${ids.length} 道候选题，请逐题预览后再保存或发布。`;
+    randomError.value = ids.length === 0;
+  } catch (exception) { randomError.value = true; randomMessage.value = exception.message; }
+  finally { applyingSuggestion.value = false; }
 }
 
 function openPaperImport() {
@@ -249,3 +285,7 @@ onMounted(async () => {
   await loadQuestions();
 });
 </script>
+
+<style scoped>
+.teacher-ai-paper-action{min-height:38px;padding:0 13px;border:1px solid rgba(46, 125, 140, 0.38);border-radius:9px;color:#287381;background:rgba(46, 125, 140, 0.07);font-weight:850}.teacher-ai-paper-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;margin:12px 0;padding:14px;border:1px solid rgba(46, 125, 140, 0.25);border-radius:12px;background:rgba(46, 125, 140, 0.05)}.teacher-ai-paper-card small,.teacher-ai-paper-card strong{display:block}.teacher-ai-paper-card small{color:#287381}.teacher-ai-paper-card strong{margin-top:4px;color:#33302b;font-size:12px;line-height:1.55}.teacher-ai-paper-card ul{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:7px;margin:0;padding:0;list-style:none}.teacher-ai-paper-card li{display:flex;gap:8px;padding:7px 9px;border-radius:8px;background:rgba(255,255,255,.04);font-size:11px}.teacher-ai-paper-card li em{color:#706b62}.teacher-ai-paper-card>button{grid-column:2;grid-row:1;min-height:36px;padding:0 12px;border-radius:9px;color:#ffffff;background:#2e7d8c;font-weight:850}@media(max-width:620px){.teacher-ai-paper-card{grid-template-columns:1fr}.teacher-ai-paper-card>button{grid-column:1;grid-row:auto}}
+</style>

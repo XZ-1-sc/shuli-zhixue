@@ -143,6 +143,12 @@
             <span v-if="result.pending_review">图片作答已安全保存，教师复核后会更新分数和诊断。</span>
             <span v-else>正确答案：{{ result.correct_answer || result.standard_answer }}</span>
             <small v-if="selectedAnswer">你的答案：{{ selectedAnswer }}</small>
+            <div v-if="result.review_brief" class="ai-result-summary">
+              <span>小逻复盘 · {{ result.review_brief.metrics?.[0]?.value }}</span>
+              <p>{{ result.review_brief.suggestion }}</p>
+              <button type="button" @click="openQuestionAssistant">问小逻</button>
+            </div>
+            <p v-if="result.companion_signal?.message" class="companion-result-line" :class="`tone-${result.companion_signal.tone}`">{{ result.companion_signal.message }}</p>
           </div>
 
           <section v-if="assessmentReport" class="assessment-complete-card">
@@ -160,6 +166,7 @@
         <footer class="paper-actions">
           <button class="tool-button" :class="{ active: isBookmarked }" type="button" @click="toggleBookmark">{{ isBookmarked ? "★ 已收藏" : "☆ 收藏本题" }}</button>
           <button class="tool-button" type="button" @click="noteOpen = !noteOpen">✎ {{ noteOpen ? "收起笔记" : "题目笔记" }}</button>
+          <button class="tool-button" :disabled="!currentQuestion || !result" type="button" @click="shareCurrentQuestion">↗ 分享给老师 / 同学</button>
           <button class="submit-button" :disabled="!canSubmit || submitting" type="button" @click="submitAnswer">{{ submitting ? "提交中..." : "提交答案" }}</button>
           <button class="next-button" :disabled="currentIndex >= questions.length - 1 || (isAssessment && !result)" type="button" @click="nextQuestion">下一题 ▶</button>
         </footer>
@@ -198,6 +205,25 @@
             下一组推荐：{{ result.next_recommendation?.title || "同知识点巩固练习" }}
             <span>›</span>
           </RouterLink>
+          <button class="ask-xiaoluo-button" type="button" @click="openQuestionAssistant">◉ 问小逻：这题为什么错？</button>
+          <button class="ai-similar-button" type="button" :disabled="similarLoading" @click="generateSimilarQuestions">
+            {{ similarLoading ? "小逻正在出题…" : "✦ AI 出题" }}
+          </button>
+          <section v-if="similarQuestions.length" class="ai-similar-practice">
+            <header><div><small>AI 变式训练</small><strong>不计入诊断统计</strong></div><span>AI 生成，仅供参考</span></header>
+            <article v-for="(question, index) in similarQuestions" :key="question.id">
+              <small>变式 {{ index + 1 }} · {{ question.knowledge_tag }}</small>
+              <p>{{ question.question_text }}</p>
+              <div v-if="question.question_type === 'choice'" class="ai-similar-options">
+                <button v-for="(option, key) in question.options" :key="key" type="button" :disabled="Boolean(similarChecked[question.id])" :class="{ selected: similarAnswers[question.id] === key }" @click="similarAnswers[question.id] = key"><b>{{ key }}</b>{{ option }}</button>
+              </div>
+              <textarea v-else v-model="similarAnswers[question.id]" :disabled="Boolean(similarChecked[question.id])" placeholder="写下你的思路或关键步骤"></textarea>
+              <button v-if="!similarChecked[question.id]" type="button" :disabled="!similarAnswers[question.id]" @click="checkSimilar(question)">核对答案</button>
+              <div v-else class="ai-similar-answer" :class="{ correct: similarChecked[question.id].correct === true }">
+                <strong>{{ similarChecked[question.id].label }}</strong><p>参考答案：{{ question.standard_answer }}</p><small>{{ question.analysis_text }}</small>
+              </div>
+            </article>
+          </section>
         </template>
         <section v-else-if="result?.pending_review" class="review-pending-panel">
           <span>⌛</span>
@@ -252,6 +278,10 @@ const pageError = ref("");
 const dragging = ref(false);
 const imageInput = ref(null);
 const assessmentReport = ref(null);
+const similarLoading = ref(false);
+const similarQuestions = ref([]);
+const similarAnswers = reactive({});
+const similarChecked = reactive({});
 const assessmentStage = ref("");
 const startedAt = ref(Date.now());
 const sessionStartedAt = ref(Date.now());
@@ -345,6 +375,9 @@ function resetCurrentDraft() {
   result.value = null;
   uploadError.value = "";
   noteSaved.value = false;
+  similarQuestions.value = [];
+  Object.keys(similarAnswers).forEach((key) => delete similarAnswers[key]);
+  Object.keys(similarChecked).forEach((key) => delete similarChecked[key]);
   startedAt.value = Date.now();
   const saved = currentQuestionId.value ? attempts[currentQuestionId.value] : null;
   if (saved) {
@@ -527,6 +560,10 @@ async function submitAnswer() {
       assessmentReport.value = response.assessment_report;
       window.dispatchEvent(new CustomEvent("xiaoluo:assessment-complete", { detail: response.assessment_report }));
     }
+    if (!isAssessment.value && response.review_brief) {
+      window.dispatchEvent(new CustomEvent("xiaoluo:practice-complete", { detail: response.review_brief }));
+    }
+    if (response.celebration_card) window.dispatchEvent(new CustomEvent("xiaoluo:practice-complete", { detail: response.celebration_card }));
   } catch (error) {
     pageError.value = error.message || "答案提交失败。";
   } finally {
@@ -586,6 +623,46 @@ async function saveNote() {
 
 function openXiaoluo() {
   window.dispatchEvent(new CustomEvent("xiaoluo:open"));
+}
+
+function openQuestionAssistant() {
+  if (!currentQuestion.value || !result.value) return openXiaoluo();
+  window.dispatchEvent(new CustomEvent("xiaoluo:open", {
+    detail: {
+      prompt: "请结合我的答案和解析，说明这题错在哪里，并给我一个可执行的改进步骤。",
+      context: { type: "question", question_id: currentQuestion.value.id, record_id: result.value.record_id },
+      autoSend: true
+    }
+  }));
+}
+
+async function shareCurrentQuestion() {
+  if (!currentQuestion.value) return;
+  sessionStorage.setItem("pending_message_question_ref", JSON.stringify({
+    question_id: currentQuestion.value.id,
+    record_id: result.value?.record_id || null
+  }));
+  await router.push("/messages");
+}
+
+async function generateSimilarQuestions() {
+  if (!currentQuestion.value) return;
+  similarLoading.value = true;
+  pageError.value = "";
+  try {
+    const data = await apiPost("/api/practice/ai-similar", { question_id: currentQuestion.value.id, count: 2 });
+    similarQuestions.value = data.questions || [];
+    Object.keys(similarAnswers).forEach((key) => delete similarAnswers[key]);
+    Object.keys(similarChecked).forEach((key) => delete similarChecked[key]);
+  } catch (error) { pageError.value = error.message || "AI 变式题生成失败。"; }
+  finally { similarLoading.value = false; }
+}
+
+function checkSimilar(question) {
+  const answer = String(similarAnswers[question.id] || "").trim();
+  const expected = String(question.correct_answer || "").trim();
+  const correct = question.question_type === "choice" ? answer.toUpperCase() === expected.toUpperCase() : null;
+  similarChecked[question.id] = { correct, label: correct === true ? "回答正确" : correct === false ? "先对照解析找出第一处差异" : "已展开参考答案，请自行逐步核对" };
 }
 
 function handleKeydown(event) {

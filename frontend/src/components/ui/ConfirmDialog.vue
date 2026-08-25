@@ -27,14 +27,14 @@ onBeforeUnmount(() => window.removeEventListener("keydown", handleKeydown));
 </script>
 
 <style scoped>
-.confirm-backdrop { position: fixed; inset: 0; z-index: 130; display: grid; place-items: center; padding: 20px; background: rgba(2, 10, 15, 0.72); backdrop-filter: blur(8px); }
-.confirm-dialog { width: min(440px, 100%); padding: 28px; color: #edf6f5; border: 1px solid rgba(126, 208, 218, 0.25); border-radius: 14px; background: #091c27; box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42); }
-.confirm-dialog small { color: #62d8e7; font-weight: 800; }
+.confirm-backdrop { position: fixed; inset: 0; z-index: 130; display: grid; place-items: center; padding: 20px; background: rgba(60, 55, 45, 0.4); backdrop-filter: blur(8px); }
+.confirm-dialog { width: min(440px, 100%); padding: 28px; color: #33302b; border: 1px solid rgba(46, 125, 140, 0.25); border-radius: 14px; background: #ffffff; box-shadow: 0 24px 70px rgba(90, 75, 50, 0.168); }
+.confirm-dialog small { color: #287381; font-weight: 800; }
 .confirm-dialog h2 { margin: 8px 0 10px; font-size: 25px; }
-.confirm-dialog p { margin: 0; color: #a8bbc0; line-height: 1.7; }
+.confirm-dialog p { margin: 0; color: #33302b; line-height: 1.7; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 26px; }
 .confirm-actions button { min-height: 42px; padding: 0 18px; border-radius: 8px; font-weight: 800; cursor: pointer; }
-.confirm-cancel { color: #d7e3e3; border: 1px solid rgba(155, 190, 195, 0.25); background: transparent; }
-.confirm-submit { color: #06151c; border: 1px solid #66d8e7; background: #66d8e7; }
-.confirm-submit[data-tone="danger"] { color: #fff; border-color: #d85f66; background: #bd4c54; }
+.confirm-cancel { color: #33302b; border: 1px solid rgba(46, 125, 140, 0.25); background: transparent; }
+.confirm-submit { color: #ffffff; border: 1px solid #2e7d8c; background: #2e7d8c; }
+.confirm-submit[data-tone="danger"] { color: #fff; border-color: #ad5046; background: #b4554a; }
 </style>

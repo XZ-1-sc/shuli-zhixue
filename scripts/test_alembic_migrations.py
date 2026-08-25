@@ -17,7 +17,7 @@ def main() -> None:
     if TEST_DATABASE != "math_brain_alembic_test":
         raise RuntimeError("拒绝操作未明确命名的迁移测试库。")
 
-    root = Path(__file__).resolve().parents[1]
+    root = Path(os.environ.get("PROJECT_ROOT", Path(__file__).resolve().parents[1]))
     source_url = make_url(database_url)
     admin_url = source_url.set(database="mysql")
     test_url = source_url.set(database=TEST_DATABASE)

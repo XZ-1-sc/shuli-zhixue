@@ -16,10 +16,12 @@ def main() -> None:
     user_ids = create_accounts()
     try:
         import test_question_import_api
+        import test_ai_features_api
         import test_teacher_workflow_e2e
 
         test_teacher_workflow_e2e.main()
         test_question_import_api.main()
+        test_ai_features_api.main()
     finally:
         cleanup_accounts(user_ids)
 

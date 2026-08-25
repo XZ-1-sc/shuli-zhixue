@@ -1,4 +1,6 @@
 import json
+from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +19,14 @@ def _records_as_list(user_records: Any) -> list[dict[str, Any]]:
     if not isinstance(user_records, list):
         return []
     return [dict(record) for record in user_records if isinstance(record, dict)]
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def _reason_type(item: dict[str, Any]) -> ReasonType:
@@ -93,7 +103,7 @@ def diagnose(
     }
     messages = [
         {"role": "system", "content": _load_prompt()},
-        {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2)},
+        {"role": "user", "content": json.dumps(payload, ensure_ascii=False, indent=2, default=_json_default)},
     ]
     result, _ = call_llm_json(
         messages,

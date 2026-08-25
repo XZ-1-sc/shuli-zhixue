@@ -10,12 +10,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid rgba(191, 220, 226, 0.14);
-  color: #9eb0b5;
+  border-bottom: 1px solid rgba(100, 90, 70, 0.14);
+  color: #706b62;
 }
 
 .plan-topline strong {
-  color: #f0f4ef;
+  color: #33302b;
 }
 
 .plan-top-actions {
@@ -52,8 +52,8 @@
   top: 48px;
   min-height: 42px;
   padding: 0 18px;
-  color: #dce9e7;
-  border: 1px solid rgba(191, 220, 226, 0.18);
+  color: #33302b;
+  border: 1px solid rgba(100, 90, 70, 0.18);
   border-radius: 7px;
   background: rgba(255, 255, 255, 0.05);
 }
@@ -76,45 +76,45 @@
   grid-template-rows: auto 20px 1fr auto;
   gap: 10px;
   padding: 20px 16px 14px;
-  color: #1f2d2d;
-  border: 1px solid rgba(38, 42, 40, 0.2);
+  color: #33302b;
+  border: 1px solid rgba(60, 55, 45, 0.2);
   border-radius: 4px;
-  background: linear-gradient(rgba(40, 35, 25, 0.045) 1px, transparent 1px), #f4efe3;
+  background: linear-gradient(rgba(90, 75, 50, 0.06) 1px, transparent 1px), #f4efe3;
   background-size: 100% 28px;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+  box-shadow: 0 18px 40px rgba(90, 75, 50, 0.128);
 }
 
 .stage-paper header h2 {
   margin: 8px 0 4px;
-  color: #1a2828;
+  color: #33302b;
   font-size: 23px;
 }
 
 .stage-paper header span {
-  color: #236d5d;
+  color: #347a56;
   font-weight: 900;
 }
 
 .stage-paper header small,
 .stage-paper footer p,
 .paper-course-list small {
-  color: #68736f;
+  color: #706b62;
 }
 
 .stage-line-node {
   height: 5px;
   margin: 6px -16px 0;
-  background: #4f9462;
+  background: #3f8f66;
 }
 
 .paper-1 .stage-line-node {
-  background: #2f80bd;
+  background: #2e7d8c;
 }
 .paper-2 .stage-line-node {
-  background: #c98d2e;
+  background: #b07d1e;
 }
 .paper-3 .stage-line-node {
-  background: #5b9b65;
+  background: #3f8f66;
 }
 
 .paper-course-list {
@@ -130,23 +130,23 @@
   align-items: center;
   gap: 8px;
   padding: 0 10px;
-  color: #1d2b2b;
-  border: 1px solid rgba(46, 44, 38, 0.16);
+  color: #33302b;
+  border: 1px solid rgba(60, 55, 45, 0.16);
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.48);
 }
 
 .paper-course-list a.doing {
-  background: rgba(92, 211, 228, 0.14);
+  background: rgba(46, 125, 140, 0.14);
 }
 
 .paper-course-list a.done {
-  background: rgba(98, 180, 110, 0.18);
+  background: rgba(63, 143, 102, 0.18);
 }
 
 .stage-paper footer {
   padding: 12px;
-  border: 1px solid rgba(46, 44, 38, 0.12);
+  border: 1px solid rgba(60, 55, 45, 0.12);
   border-radius: 4px;
   background: rgba(255, 255, 255, 0.34);
 }
@@ -166,7 +166,7 @@
 .week-plan-card,
 .priority-card {
   padding: 16px;
-  background: rgba(9, 24, 36, 0.78);
+  background: rgba(255, 255, 255, 0.94);
 }
 
 .week-plan-card h3,
@@ -174,12 +174,12 @@
   display: flex;
   justify-content: space-between;
   margin: 0 0 12px;
-  color: #f2f4ee;
+  color: #33302b;
 }
 
 .week-plan-card h3 span,
 .priority-card h3 span {
-  color: #b2c1c5;
+  color: #33302b;
   font-size: 12px;
 }
 
@@ -188,11 +188,11 @@
   grid-template-columns: 42px 1fr 70px;
   gap: 10px;
   padding: 8px 0;
-  border-bottom: 1px solid rgba(191, 220, 226, 0.11);
+  border-bottom: 1px solid rgba(100, 90, 70, 0.11);
 }
 
 .week-row b {
-  color: #70dc7e;
+  color: #347a56;
 }
 
 .week-row span,
@@ -202,7 +202,7 @@
 
 .week-row small,
 .week-row em {
-  color: #9badb2;
+  color: #706b62;
   font-style: normal;
   font-size: 12px;
 }
@@ -212,11 +212,11 @@
 }
 
 .priority-card strong {
-  color: #f4bd54;
+  color: #8f5f0e;
 }
 
 .priority-card p {
-  color: #a8b9bd;
+  color: #33302b;
   line-height: 1.7;
 }
 
@@ -230,17 +230,17 @@
 .priority-card i {
   display: block;
   height: 100%;
-  background: #e7a84b;
+  background: #b07d1e;
 }
 
 .vertical-paper-note {
   grid-column: 2;
   grid-row: 1 / span 2;
   padding: 14px;
-  color: #25251c;
+  color: #3a362f;
   background: #e6d5b5;
   border-radius: 10px;
-  box-shadow: inset 0 0 22px rgba(74, 51, 28, 0.2), 0 18px 38px rgba(0, 0, 0, 0.34);
+  box-shadow: inset 0 0 22px rgba(90, 75, 50, 0.08), 0 18px 38px rgba(90, 75, 50, 0.136);
 }
 
 .vertical-paper-note div {
@@ -248,7 +248,7 @@
   display: grid;
   place-items: center;
   text-align: center;
-  border: 1px dashed rgba(64, 42, 24, 0.25);
+  border: 1px dashed rgba(90, 75, 50, 0.1);
   writing-mode: vertical-rl;
 }
 
@@ -260,7 +260,7 @@
 .course-flow-map {
   margin-top: 18px;
   padding: 18px;
-  background: rgba(9, 24, 36, 0.68);
+  background: rgba(255, 255, 255, 0.82);
 }
 
 .flow-line {
@@ -273,17 +273,17 @@
 .flow-line a {
   position: relative;
   padding: 10px 18px;
-  color: #d8f5f6;
-  border: 1px solid rgba(91, 215, 236, 0.44);
+  color: #33302b;
+  border: 1px solid rgba(46, 125, 140, 0.44);
   border-radius: 4px;
-  background: rgba(91, 215, 236, 0.08);
+  background: rgba(46, 125, 140, 0.08);
 }
 
 .flow-line a:not(:last-child)::after {
   content: "→";
   position: absolute;
   right: -17px;
-  color: #9fb0b3;
+  color: #706b62;
 }
 
 .plan-progress-footer {
@@ -294,13 +294,13 @@
   gap: 18px;
   margin-top: 18px;
   padding: 14px 28px;
-  background: rgba(9, 24, 36, 0.76);
+  background: rgba(255, 255, 255, 0.94);
 }
 
 .plan-progress-footer strong {
   display: block;
   margin-top: 6px;
-  color: #59d4ee;
+  color: #287381;
   font-size: 20px;
 }
 
@@ -308,7 +308,7 @@
   min-height: 42px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(191, 220, 226, 0.18);
+  border: 1px solid rgba(100, 90, 70, 0.18);
   border-radius: 7px;
 }
 

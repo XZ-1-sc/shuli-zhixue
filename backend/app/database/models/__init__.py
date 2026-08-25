@@ -10,13 +10,24 @@ from .content import (
     SourceAttribution,
 )
 from .learning import ChatMessage, LearningPlan, LLMCallLog, NegotiationLog, PracticeRecord, UserGoalSetting
-from .side import LearningResource, NoteAttachment, UserNote, UserNotification
-from .teaching import Assignment, AssignmentAnswer, AssignmentAttempt, AssignmentQuestion, Class, ClassMember
+from .message import Conversation, Message
+from .side import LearningResource, NoteAttachment, UserNote, UserNotification, UserPreference
+from .teaching import (
+    AdviceDraft,
+    Assignment,
+    AssignmentAnswer,
+    AssignmentAttempt,
+    AssignmentQuestion,
+    Class,
+    ClassMember,
+    TeacherStudentMessage,
+)
 from .user import AuditLog, AuthSession, TeacherInviteCode, TeacherProfile, User
 
 
 __all__ = [
     "AnswerAttachment",
+    "AdviceDraft",
     "AssessmentSession",
     "AssessmentSessionQuestion",
     "Assignment",
@@ -29,12 +40,14 @@ __all__ = [
     "ChatMessage",
     "Class",
     "ClassMember",
+    "Conversation",
     "KnowledgeNode",
     "LearningPlan",
     "LearningResource",
     "LLMCallLog",
     "MathCourse",
     "MathStage",
+    "Message",
     "MistakeTag",
     "NegotiationLog",
     "NoteAttachment",
@@ -44,9 +57,11 @@ __all__ = [
     "SourceAttribution",
     "TeacherInviteCode",
     "TeacherProfile",
+    "TeacherStudentMessage",
     "UploadedFile",
     "User",
     "UserGoalSetting",
     "UserNote",
     "UserNotification",
+    "UserPreference",
 ]

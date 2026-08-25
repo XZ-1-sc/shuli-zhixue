@@ -70,8 +70,14 @@
         <article class="glass-panel daily-practice-card">
           <div class="panel-title">
             今日练习
-            <span>▣ 2024-05-18（周六）</span>
+            <span>{{ currentDateLabel }}</span>
           </div>
+          <section class="today-ai-advice">
+            <span aria-hidden="true">✦</span>
+            <div><small>今日 AI 建议</small><strong>{{ todayAdvice.title }}</strong><p>{{ todayAdvice.text }}</p></div>
+            <button type="button" @click="askXiaoluo">问小逻</button>
+          </section>
+          <ol v-if="!hasRecords" class="student-onboarding-steps" aria-label="建立个性化学习计划的三个步骤"><li><b>1</b><span>选择当前阶段</span></li><li><b>2</b><span>完成基础首测</span></li><li><b>3</b><span>查看个人计划</span></li></ol>
           <div class="daily-list">
             <template v-if="displayTasks.length">
               <button
@@ -126,6 +132,7 @@
           </article>
         </div>
       </section>
+      <HeatmapCalendar class="dashboard-learning-insights" :calendar="insights.calendar || []" :trend="insights.mastery_trend || []" />
   </section>
 </template>
 
@@ -134,6 +141,7 @@ import { computed, onMounted, reactive, ref, watch } from "vue";
 import { RouterLink, useRouter } from "vue-router";
 
 import RadarChart from "../components/RadarChart.vue";
+import HeatmapCalendar from "../components/ui/HeatmapCalendar.vue";
 import { apiGet, apiPost } from "../api/client";
 import { useUserStore } from "../stores/user";
 
@@ -144,6 +152,7 @@ const stages = ref([]);
 const tasks = ref([]);
 const diagnosis = ref({});
 const profile = ref({});
+const insights = ref({ calendar: [], mastery_trend: [] });
 const goal = reactive({
   target_stage: "大一",
   target_course: "高等数学上",
@@ -167,15 +176,30 @@ const stageCourses = computed(() => {
 
 const displayProgress = computed(() => {
   const radar = diagnosis.value.radar || [];
-  if (!radar.length || !diagnosis.value.recent_record_count) {
+  if (!radar.length || !hasRecords.value) {
     return 0;
   }
   return Math.max(1, Math.round(radar.reduce((sum, item) => sum + Number(item.score || 0), 0) / radar.length));
 });
 
-const hasRecords = computed(() => Number(diagnosis.value.recent_record_count || 0) > 0);
-const answeredCount = computed(() => Number(profile.value.stats?.practice_count || diagnosis.value.recent_record_count || 0));
+const recordCount = computed(() => Math.max(
+  Number(diagnosis.value.recent_record_count || 0),
+  Number(profile.value.stats?.practice_count || 0)
+));
+const hasRecords = computed(() => recordCount.value > 0);
+const answeredCount = computed(() => recordCount.value);
 const studyHours = computed(() => Number(profile.value.stats?.study_hours || 0).toFixed(1));
+const currentDateLabel = computed(() => {
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short"
+  }).formatToParts(new Date());
+  const dateParts = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `▣ ${dateParts.year}-${dateParts.month}-${dateParts.day}（${dateParts.weekday}）`;
+});
 const masteryLabel = computed(() => {
   if (!hasRecords.value) {
     return "待测评";
@@ -204,6 +228,12 @@ const weakCourses = computed(() => {
   }
   const weak = diagnosis.value.weak_points || [];
   return weak.slice(0, 3);
+});
+const todayAdvice = computed(() => {
+  if (!hasRecords.value) return { title: "先完成数学基础首测", text: "用一组混合题建立真实基线，小逻才能生成可靠的学习建议。" };
+  const first = tasks.value?.[0];
+  const weak = weakCourses.value?.[0];
+  return { title: first?.title || `${weak?.fine_tag || weak?.knowledge_tag || "薄弱知识点"} 巩固`, text: weak ? `优先处理 ${weak.course} 的“${weak.fine_tag || weak.knowledge_tag}”，做题后立即复盘错因。` : "保持当前节奏，完成一组变式题验证迁移能力。" };
 });
 
 function syncCourseToStage() {
@@ -238,14 +268,16 @@ function startTask(task) {
     }
   });
 }
+function askXiaoluo() { window.dispatchEvent(new CustomEvent("xiaoluo:open", { detail: { prompt: "请结合我的今日推荐、薄弱点和学习目标，告诉我今天怎么安排最有效。", context: { type: "plan" }, autoSend: true } })); }
 
 async function load() {
-  const stageData = await apiGet("/api/stages");
+  const stageData = await apiGet("/api/stages").catch(() => ({ stages: [] }));
   stages.value = stageData.stages || [];
   if (!user.userId) {
     diagnosis.value = { recent_record_count: 0, radar: [], weak_points: [], course_scores: [] };
     tasks.value = [];
     profile.value = {};
+    insights.value = { calendar: [], mastery_trend: [] };
     Object.assign(goal, {
       target_stage: "大一",
       target_course: "高等数学上",
@@ -255,11 +287,19 @@ async function load() {
     syncCourseToStage();
     return;
   }
-  const [goalData, diagnoseData, recommendData, profileData] = await Promise.all([
-    apiGet("/api/user-goals").catch(() => ({})),
-    apiGet("/api/diagnose"),
-    apiGet("/api/recommend", { limit: 5 }),
-    apiGet("/api/profile/summary").catch(() => ({}))
+  const requests = {
+    goal: apiGet("/api/user-goals").catch(() => ({})),
+    diagnosis: apiGet("/api/diagnose").catch(() => ({ recent_record_count: 0, radar: [], weak_points: [], course_scores: [] })),
+    recommendation: apiGet("/api/recommend", { limit: 5 }).catch(() => ({ tasks: [] })),
+    profile: apiGet("/api/profile/summary").catch(() => ({})),
+    insights: apiGet("/api/learning-insights").catch(() => ({ calendar: [], mastery_trend: [] }))
+  };
+  profile.value = await requests.profile;
+  const [goalData, diagnoseData, recommendData, insightData] = await Promise.all([
+    requests.goal,
+    requests.diagnosis,
+    requests.recommendation,
+    requests.insights
   ]);
   Object.assign(goal, {
     target_stage: goalData.target_stage || "大一",
@@ -269,7 +309,7 @@ async function load() {
   });
   diagnosis.value = diagnoseData;
   tasks.value = recommendData.tasks || [];
-  profile.value = profileData || {};
+  insights.value = insightData;
   syncCourseToStage();
 }
 

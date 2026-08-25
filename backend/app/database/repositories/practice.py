@@ -11,7 +11,55 @@ from ...api.schemas import AnswerSubmissionRequest
 from ...services.scoring import _score_subjective
 from .assessment import _assessment_after_submit_sync, _validate_assessment_question
 from .common import _get_user_exists
+from .diagnosis import _practice_review_brief_sync
 from .questions import _get_question_sync, _random_questions_sync, _validate_attachment_ids
+
+
+def _practice_companion_signal_sync(user_id: int, question: dict[str, Any]) -> dict[str, Any]:
+    with SessionLocal() as db:
+        rows = db.execute(
+            text(
+                """
+                SELECT pr.id,pr.is_correct
+                FROM practice_records pr JOIN questions q ON q.id=pr.question_id
+                WHERE pr.user_id=:user_id AND q.knowledge_tag=:knowledge_tag AND pr.is_correct IS NOT NULL
+                ORDER BY pr.answered_at DESC,pr.id DESC LIMIT 30
+                """
+            ),
+            {"user_id": user_id, "knowledge_tag": question.get("knowledge_tag")},
+        ).mappings().all()
+    streak_wrong = 0
+    for row in rows:
+        if bool(row["is_correct"]):
+            break
+        streak_wrong += 1
+    total = len(rows)
+    correct = sum(1 for row in rows if bool(row["is_correct"]))
+    current_accuracy = correct / total if total else 0
+    previous = rows[1:]
+    previous_accuracy = sum(1 for row in previous if bool(row["is_correct"])) / len(previous) if previous else 0
+    breakthrough = bool(rows and rows[0]["is_correct"] and total >= 5 and current_accuracy >= 0.8 and previous_accuracy < 0.8)
+    if streak_wrong >= 3:
+        tone = "empathy"
+        message = f"这类题连续卡住 {streak_wrong} 次不代表学不会。先停一下，我换个角度帮你拆开关键一步。"
+    elif breakthrough:
+        tone = "celebration"
+        message = f"你在“{question.get('fine_tag') or question.get('knowledge_tag')}”上的近期掌握度首次突破 80%，这次进步有真实记录支撑。"
+    elif rows and bool(rows[0]["is_correct"]):
+        tone = "encouragement"
+        message = "这一步已经走对了，再用一道参数变化题确认不是偶然。"
+    else:
+        tone = "coaching"
+        message = "先别急着重做整题，定位第一个偏离标准步骤的位置会更有效。"
+    return {
+        "tone": tone,
+        "message": message,
+        "streak_wrong": streak_wrong,
+        "breakthrough_80": breakthrough,
+        "knowledge_tag": question.get("knowledge_tag"),
+        "fine_tag": question.get("fine_tag"),
+        "recent_mastery": round(current_accuracy * 100, 1),
+    }
 
 
 def _submit_answer_sync(user_id: int, payload: AnswerSubmissionRequest) -> dict[str, Any]:
@@ -112,6 +160,7 @@ def _submit_answer_sync(user_id: int, payload: AnswerSubmissionRequest) -> dict[
     )
     response = {
         "task_id": payload.task_id,
+        "record_id": record_id,
         "question_id": payload.question_id,
         "is_correct": is_correct,
         "score": score,
@@ -136,4 +185,25 @@ def _submit_answer_sync(user_id: int, payload: AnswerSubmissionRequest) -> dict[
         assessment_state = _assessment_after_submit_sync(user_id, payload.task_id)
         response.update(assessment_state)
     response["evaluation"] = evaluate(user_id, payload.task_id).model_dump()
+    response["review_brief"] = _practice_review_brief_sync(user_id, payload.task_id)
+    signal = _practice_companion_signal_sync(user_id, question)
+    response["companion_signal"] = signal
+    response["review_brief"]["companion"] = signal
+    if signal["streak_wrong"] >= 3:
+        response["review_brief"].setdefault("actions", []).append(
+            {
+                "label": "换个角度再讲一次",
+                "type": "prompt",
+                "prompt": "这类题我已经连续做错，请换一种直观方法讲清楚关键概念，并带我走完第一步。",
+                "context": {"type": "question", "record_id": record_id},
+            }
+        )
+    if signal["breakthrough_80"]:
+        response["celebration_card"] = {
+            "type": "celebration",
+            "title": "掌握度突破 80%",
+            "summary": signal["message"],
+            "metrics": [{"label": "近期掌握度", "value": f"{signal['recent_mastery']:g}%"}],
+            "actions": [{"label": "查看成就", "type": "navigate", "target": "/achievements"}],
+        }
     return response

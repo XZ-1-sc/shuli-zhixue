@@ -4,7 +4,7 @@
         <p class="math-doodle">∫  d/dx  ∑  π²/6</p>
         <h1>完整学习规划</h1>
         <p>基于诊断测试结果，已为你生成个性化四年学习路线图</p>
-        <button type="button">⇩ 导出学习规划</button>
+        <div class="plan-title-actions"><button type="button">⇩ 导出学习规划</button><button type="button" @click="askXiaoluo">◉ 问小逻怎么安排</button></div>
       </section>
 
       <section class="plan-content-grid">
@@ -147,9 +147,15 @@ const weeklyPlan = computed(() => roadmap.value.weekly_plan || [
 
 const flowCourses = ["高等数学（上）", "高等数学（下）", "线性代数（上）", "概率论与数理统计", "复变函数", "实变函数", "抽象代数", "数学建模", "数值分析"];
 
+function askXiaoluo() { window.dispatchEvent(new CustomEvent("xiaoluo:open", { detail: { prompt: "请结合我的当前学习规划、薄弱点和可用时间，帮我调整本周安排。", context: { type: "plan" }, autoSend: true } })); }
+
 onMounted(async () => {
   roadmap.value = await apiGet("/api/study-roadmap");
 });
 </script>
+
+<style scoped>
+.plan-title-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}.plan-title-actions button+button{border-color:rgba(46, 125, 140, 0.4);color:#33302b;background:rgba(46, 125, 140, 0.08)}
+</style>
 
 <style scoped src="../styles/views/roadmap.css"></style>

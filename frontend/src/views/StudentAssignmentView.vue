@@ -50,6 +50,7 @@
           <p v-if="current.saved_answer.teacher_feedback"><strong>教师评语：</strong>{{ current.saved_answer.teacher_feedback }}</p>
           <p><strong>标准答案：</strong>{{ current.standard_answer }}</p><ol><li v-for="step in current.key_steps" :key="step">{{ step }}</li></ol><p>{{ current.analysis_text }}</p>
           <div v-if="current.attachments?.analysis?.length" class="student-question-figures analysis"><img v-for="file in current.attachments.analysis" :key="file.id" :src="file.url" :alt="file.name" /></div>
+          <button class="assignment-ask-ai" type="button" @click="askAboutAssignmentQuestion">◉ 问小逻解析本题</button>
         </section>
 
         <footer><button :disabled="currentIndex <= 0" @click="switchQuestion(currentIndex - 1)">上一题</button><button v-if="canEdit" class="save-answer" :disabled="saving" @click="saveAnswer">{{ saving ? "保存中…" : "保存本题" }}</button><button :disabled="currentIndex >= detail.questions.length - 1" @click="switchQuestion(currentIndex + 1)">下一题</button></footer>
@@ -89,8 +90,14 @@ async function start() { try { detail.value = await apiPost(`/api/assignments/${
 async function uploadImages(event) { const files = [...(event.target.files || [])]; if (!files.length) return; uploading.value = true; try { const form = new FormData(); form.append("user_id", user.userId); files.forEach((file) => form.append("files", file)); const data = await apiUpload("/api/uploads/answer-images", form); for (const file of data.files || []) { attachments.value.push({ ...file, previewUrl: file.url }); answer.attachment_ids.push(file.id); } } catch (e) { message.value = e.message; } finally { uploading.value = false; event.target.value = ""; } }
 async function removeAttachment(file) { if (!current.value.saved_answer?.id) { try { await apiDelete(`/api/uploads/${file.id}`); } catch (e) { message.value = e.message; return; } } attachments.value = attachments.value.filter((item) => item.id !== file.id); answer.attachment_ids = answer.attachment_ids.filter((id) => id !== file.id); }
 async function saveAnswer(silent = false) { saving.value = true; if (!silent) message.value = ""; try { await apiPut(`/api/assignments/${route.params.assignmentId}/answers`, { assignment_question_id: current.value.assignment_question_id, ...answer, time_spent_seconds: Math.max(1, Math.floor((Date.now() - questionOpenedAt.value) / 1000)) }); detail.value = await apiGet(`/api/assignments/${route.params.assignmentId}`); hydrateAnswer(); if (!silent) message.value = "本题已保存。"; } catch (e) { message.value = e.message; } finally { saving.value = false; } }
-async function submitAll() { const confirmed = await requestConfirmation({ title: "提交整份作业", description: "提交后不能修改答案，确定交卷吗？", confirmLabel: "确认交卷" }); if (!confirmed) return; try { detail.value = await apiPost(`/api/assignments/${route.params.assignmentId}/submit`); stopTimer(); hydrateAnswer(); } catch (e) { message.value = e.message; } }
-async function submitForTimeout() { if (timeoutSubmitting.value || !canEdit.value) return; timeoutSubmitting.value = true; message.value = "作业限时已结束，正在自动交卷…"; try { detail.value = await apiPost(`/api/assignments/${route.params.assignmentId}/submit`); hydrateAnswer(); message.value = "已自动交卷。"; } catch (e) { message.value = e.message; } finally { timeoutSubmitting.value = false; } }
+function announceReview(data) { if (data.review_brief) window.dispatchEvent(new CustomEvent("xiaoluo:practice-complete", { detail: data.review_brief })); }
+async function submitAll() { const confirmed = await requestConfirmation({ title: "提交整份作业", description: "提交后不能修改答案，确定交卷吗？", confirmLabel: "确认交卷" }); if (!confirmed) return; try { const data = await apiPost(`/api/assignments/${route.params.assignmentId}/submit`); detail.value = data; stopTimer(); hydrateAnswer(); announceReview(data); } catch (e) { message.value = e.message; } }
+async function submitForTimeout() { if (timeoutSubmitting.value || !canEdit.value) return; timeoutSubmitting.value = true; message.value = "作业限时已结束，正在自动交卷…"; try { const data = await apiPost(`/api/assignments/${route.params.assignmentId}/submit`); detail.value = data; hydrateAnswer(); message.value = "已自动交卷。"; announceReview(data); } catch (e) { message.value = e.message; } finally { timeoutSubmitting.value = false; } }
+function askAboutAssignmentQuestion() { window.dispatchEvent(new CustomEvent("xiaoluo:open", { detail: { prompt: "请结合这份作业和我当前这道题的作答，解释关键思路并给出订正建议。", context: { type: "assignment", assignment_id: Number(route.params.assignmentId), question_id: current.value?.id }, autoSend: true } })); }
 onMounted(load);
 onBeforeUnmount(stopTimer);
 </script>
+
+<style scoped>
+.assignment-ask-ai { min-height:38px; margin-top:12px; padding:0 13px; border:1px solid rgba(46, 125, 140, 0.36); border-radius:9px; color:#33302b; background:rgba(46, 125, 140, 0.07); font-weight:850; }
+</style>

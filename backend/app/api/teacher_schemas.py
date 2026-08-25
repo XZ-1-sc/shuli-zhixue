@@ -81,3 +81,40 @@ class ReviewRequest(BaseModel):
     score: float = Field(ge=0, le=100)
     feedback: str = Field(min_length=1, max_length=4000)
     correction_required: bool = False
+
+
+class GradeCommentAIRequest(BaseModel):
+    record_id: int | None = Field(default=None, ge=1)
+    record_ids: list[int] | None = Field(default=None, min_length=1, max_length=20)
+    draft_score: float | None = Field(default=None, ge=0, le=100)
+
+    @model_validator(mode="after")
+    def validate_record_scope(self) -> "GradeCommentAIRequest":
+        if bool(self.record_id) == bool(self.record_ids):
+            raise ValueError("单条 record_id 与批量 record_ids 必须且只能提供一种。")
+        if self.record_ids and len(set(self.record_ids)) != len(self.record_ids):
+            raise ValueError("批量作答编号不能重复。")
+        return self
+
+
+class ClassInsightAIRequest(BaseModel):
+    scope: Literal["class", "student"]
+    class_id: int | None = Field(default=None, ge=1)
+    student_id: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_scope_id(self) -> "ClassInsightAIRequest":
+        if self.scope == "class" and not self.class_id:
+            raise ValueError("班级学情解读必须提供 class_id。")
+        if self.scope == "student" and not self.student_id:
+            raise ValueError("学生学情解读必须提供 student_id。")
+        return self
+
+
+class AssignmentSuggestionAIRequest(BaseModel):
+    class_id: int = Field(ge=1)
+    question_count: int = Field(default=10, ge=1, le=100)
+
+
+class AssignmentReportAIRequest(BaseModel):
+    assignment_id: int = Field(ge=1)

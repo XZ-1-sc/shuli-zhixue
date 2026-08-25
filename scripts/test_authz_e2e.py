@@ -115,9 +115,11 @@ def main() -> None:
             create_chat_message(int(user_b["user_id"]), foreign_session_id)
             expect_status(student_a.get("/api/chat/history", params={"session_id": foreign_session_id}), 403)
 
-            for path in ("/api/diagnose", "/api/notes", "/api/messages", "/api/chat/history"):
+            for path in ("/api/diagnose", "/api/notes", "/api/messages"):
                 response = teacher.get(path)
                 expect_status(response, 403)
+            expect_status(teacher.get("/api/chat/history"), 200)
+            expect_status(teacher.get("/api/chat/history", params={"user_id": int(user_a["user_id"])}), 403)
 
         with httpx.Client(base_url=BASE_URL, timeout=15.0) as anonymous:
             for path in ("/api/diagnose", "/api/practice/random", "/api/resources", "/api/chat/history"):

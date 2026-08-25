@@ -158,3 +158,55 @@ class AssignmentAnswer(IdMixin, TimestampMixin, Base):
     teacher_feedback: Mapped[str | None] = mapped_column(Text)
     answered_at: Mapped[datetime | None] = mapped_column(DATETIME)
     reviewed_at: Mapped[datetime | None] = mapped_column(DATETIME)
+
+
+
+
+class TeacherStudentMessage(IdMixin, CreatedAtMixin, Base):
+    __tablename__ = "teacher_student_messages"
+    __table_args__ = (
+        Index("idx_tsm_pair_time", "teacher_id", "student_id", "created_at"),
+        Index("idx_tsm_student_read", "student_id", "is_read", "created_at"),
+        Index("idx_tsm_teacher_read", "teacher_id", "is_read", "created_at"),
+    )
+
+    teacher_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False
+    )
+    student_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False
+    )
+    class_id: Mapped[int | None] = mapped_column(
+        BIGINT(unsigned=True), ForeignKey("classes.id", ondelete="SET NULL", onupdate="CASCADE")
+    )
+    sender_role: Mapped[str] = mapped_column(
+        ENUM("teacher", "student"), nullable=False
+    )
+    message_type: Mapped[str] = mapped_column(
+        ENUM("chat", "advice"), nullable=False, server_default=text("'chat'")
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    is_read: Mapped[int] = mapped_column(TINYINT(1), nullable=False, server_default=text("0"))
+
+
+class AdviceDraft(IdMixin, TimestampMixin, Base):
+    __tablename__ = "advice_drafts"
+    __table_args__ = (
+        Index("idx_advice_drafts_teacher_status", "teacher_id", "status"),
+        Index("idx_advice_drafts_class_student", "class_id", "student_id", "status"),
+    )
+
+    teacher_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False
+    )
+    class_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), ForeignKey("classes.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False
+    )
+    student_id: Mapped[int] = mapped_column(
+        BIGINT(unsigned=True), ForeignKey("users.id", ondelete="CASCADE", onupdate="CASCADE"), nullable=False
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        ENUM("draft", "sent", "archived"), nullable=False, server_default=text("'draft'")
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(DATETIME)

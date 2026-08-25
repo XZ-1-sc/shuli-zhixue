@@ -17,16 +17,17 @@ const TeacherAssignmentsView = () => import("../views/TeacherAssignmentsView.vue
 const TeacherAssignmentEditorView = () => import("../views/TeacherAssignmentEditorView.vue");
 const TeacherAssignmentDetailView = () => import("../views/TeacherAssignmentDetailView.vue");
 const TeacherReviewView = () => import("../views/TeacherReviewView.vue");
+const TeacherMessagesView = () => import("../views/TeacherMessagesView.vue");
 const StudentAssignmentsView = () => import("../views/StudentAssignmentsView.vue");
 const StudentAssignmentView = () => import("../views/StudentAssignmentView.vue");
 
-const studentMeta = (title) => ({ title, requiresAuth: true, role: "student", layout: "student" });
+const studentMeta = (title) => ({ title, requiresAuth: true, role: "student", layout: "student", assistantRole: "student" });
 const teacherMeta = (title, navKey, extra = {}) => ({
   title,
   navKey,
   requiresAuth: true,
   role: "teacher",
-  hideAssistant: true,
+  assistantRole: "teacher",
   layout: "teacher",
   ...extra
 });
@@ -69,6 +70,7 @@ const routes = [
   { path: "/teacher/assignments/:assignmentId/edit", name: "teacher-assignment-edit", component: TeacherAssignmentEditorView, meta: teacherMeta("编辑作业", "assignments") },
   { path: "/teacher/assignments/:assignmentId", name: "teacher-assignment-detail", component: TeacherAssignmentDetailView, meta: teacherMeta("作业进度", "assignments") },
   { path: "/teacher/review", name: "teacher-review", component: TeacherReviewView, meta: teacherMeta("批改中心", "review") },
+  { path: "/teacher/messages", name: "teacher-messages", component: TeacherMessagesView, meta: teacherMeta("消息中心", "messages") },
   { path: "/:pathMatch(.*)*", redirect: "/" }
 ];
 

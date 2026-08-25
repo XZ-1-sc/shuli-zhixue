@@ -6,7 +6,7 @@ import secrets
 from datetime import date, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -195,6 +195,106 @@ def _archive_class_sync(teacher_id: int, class_id: int) -> dict[str, bool]:
         _audit(db, teacher_id, "class.archived", "class", class_id, {})
         db.commit()
     return {"archived": True}
+
+
+def _class_delete_counts(db: Any, class_id: int) -> dict[str, int]:
+    member_count = db.execute(
+        text("SELECT COUNT(*) FROM class_members WHERE class_id=:class_id AND status='active'"),
+        {"class_id": class_id},
+    ).scalar_one()
+    assignment_count = db.execute(
+        text("SELECT COUNT(*) FROM assignments WHERE class_id=:class_id"),
+        {"class_id": class_id},
+    ).scalar_one()
+    record_count = db.execute(
+        text(
+            """
+            SELECT COUNT(*)
+            FROM practice_records AS pr
+            JOIN class_members AS cm ON cm.student_id = pr.user_id AND cm.status = 'active'
+            WHERE cm.class_id = :class_id
+            """
+        ),
+        {"class_id": class_id},
+    ).scalar_one()
+    return {
+        "member_count": int(member_count or 0),
+        "assignment_count": int(assignment_count or 0),
+        "record_count": int(record_count or 0),
+    }
+
+
+def _class_delete_impact_sync(teacher_id: int, class_id: int) -> dict[str, Any]:
+    with SessionLocal() as db:
+        class_row = _owned_class(db, teacher_id, class_id)
+        counts = _class_delete_counts(db, class_id)
+        has_published_assignment = bool(
+            db.execute(
+                text("SELECT 1 FROM assignments WHERE class_id=:class_id AND status='published' LIMIT 1"),
+                {"class_id": class_id},
+            ).first()
+        )
+    return {
+        "class_id": class_id,
+        "class_name": str(class_row["name"]),
+        **counts,
+        "has_data": any(counts.values()),
+        "has_published_assignment": has_published_assignment,
+    }
+
+
+def _delete_class_sync(teacher_id: int, class_id: int, confirm: bool) -> dict[str, Any]:
+    with SessionLocal() as db:
+        _owned_class(db, teacher_id, class_id)
+        active_assignment = db.execute(
+            text("SELECT 1 FROM assignments WHERE class_id=:class_id AND status='published' LIMIT 1"),
+            {"class_id": class_id},
+        ).first()
+        if active_assignment:
+            raise HTTPException(status_code=409, detail="班级仍有进行中的作业，请先结束作业再删除班级。")
+
+        counts = _class_delete_counts(db, class_id)
+        if any(counts.values()) and not confirm:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"班级含 {counts['member_count']} 名学生、{counts['assignment_count']} 份作业、"
+                    f"{counts['record_count']} 条关联作答记录。永久删除会移除成员关系、作业及提交成绩；"
+                    "学生作答记录本身会保留，但作业关联将被清空。建议先归档。"
+                    "如确认删除，请输入班级名称并再次提交。"
+                ),
+            )
+
+        # MySQL may process the class -> assignments CASCADE before both practice-record
+        # SET NULL constraints. Clear the two links explicitly so the durable practice
+        # record is preserved without depending on multi-path cascade ordering.
+        db.execute(
+            text(
+                """
+                UPDATE practice_records
+                SET assignment_id = NULL, assignment_attempt_id = NULL
+                WHERE assignment_id IN (
+                    SELECT id FROM assignments WHERE class_id = :class_id
+                ) OR assignment_attempt_id IN (
+                    SELECT aa.id
+                    FROM assignment_attempts AS aa
+                    JOIN assignments AS a ON a.id = aa.assignment_id
+                    WHERE a.class_id = :class_id
+                )
+                """
+            ),
+            {"class_id": class_id},
+        )
+        result = db.execute(
+            text("DELETE FROM classes WHERE id=:class_id AND teacher_id=:teacher_id"),
+            {"class_id": class_id, "teacher_id": teacher_id},
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            raise HTTPException(status_code=404, detail="班级不存在或不属于当前教师。")
+        _audit(db, teacher_id, "class.deleted", "class", class_id, {"confirm": confirm, **counts})
+        db.commit()
+    return {"deleted": True, **counts}
 
 
 def _class_detail_sync(teacher_id: int, class_id: int) -> dict[str, Any]:
@@ -527,6 +627,11 @@ async def create_class(payload: ClassCreateRequest, current: dict[str, Any] = De
     return await asyncio.to_thread(_create_class_sync, int(current["id"]), payload)
 
 
+@router.get("/classes/{class_id}/delete-impact")
+async def class_delete_impact(class_id: int, current: dict[str, Any] = Depends(require_teacher)) -> dict[str, Any]:
+    return await asyncio.to_thread(_class_delete_impact_sync, int(current["id"]), class_id)
+
+
 @router.get("/classes/{class_id}")
 async def class_detail(class_id: int, current: dict[str, Any] = Depends(require_teacher)) -> dict[str, Any]:
     return await asyncio.to_thread(_class_detail_sync, int(current["id"]), class_id)
@@ -555,6 +660,15 @@ async def regenerate_invite(class_id: int, current: dict[str, Any] = Depends(req
 @router.post("/classes/{class_id}/archive")
 async def archive_class(class_id: int, current: dict[str, Any] = Depends(require_teacher)) -> dict[str, bool]:
     return await asyncio.to_thread(_archive_class_sync, int(current["id"]), class_id)
+
+
+@router.delete("/classes/{class_id}")
+async def delete_class(
+    class_id: int,
+    confirm: bool = Query(default=False),
+    current: dict[str, Any] = Depends(require_teacher),
+) -> dict[str, Any]:
+    return await asyncio.to_thread(_delete_class_sync, int(current["id"]), class_id, confirm)
 
 
 @router.post("/classes/{class_id}/members")

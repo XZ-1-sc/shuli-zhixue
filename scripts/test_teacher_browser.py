@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.database.session import SessionLocal  # noqa: E402
+from app.utils.password import hash_password  # noqa: E402
 
 
 BASE_URL = "http://localhost:8080"
@@ -85,6 +86,35 @@ def assert_page_healthy(driver: webdriver.Edge, expected_heading: str) -> None:
             """
         )
         raise AssertionError({"dimensions": dimensions, "offenders": offenders})
+    collisions = driver.execute_script(
+        """
+        const orb = document.querySelector('.assistant-orb');
+        if (!orb) return [];
+        const orbRect = orb.getBoundingClientRect();
+        return [...document.querySelectorAll('a, button, input, select, textarea')]
+          .filter((element) => element !== orb && !element.closest('.assistant-drawer'))
+          .filter((element) => {
+            const style = getComputedStyle(element);
+            const rect = element.getBoundingClientRect();
+            return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+          })
+          .map((element) => {
+            const rect = element.getBoundingClientRect();
+            return {
+              element,
+              overlapWidth: Math.min(orbRect.right, rect.right) - Math.max(orbRect.left, rect.left),
+              overlapHeight: Math.min(orbRect.bottom, rect.bottom) - Math.max(orbRect.top, rect.top)
+            };
+          })
+          .filter((item) => item.overlapWidth > 1 && item.overlapHeight > 1)
+          .map((item) => ({
+            tag: item.element.tagName,
+            className: typeof item.element.className === 'string' ? item.element.className : '',
+            text: (item.element.textContent || item.element.value || '').trim().slice(0, 50)
+          }));
+        """
+    )
+    assert not collisions, {"assistant_collisions": collisions}
 
 
 def collect_network_failures(driver: webdriver.Edge) -> list[dict[str, object]]:
@@ -128,11 +158,43 @@ def cleanup_class(class_name: str) -> None:
         db.commit()
 
 
-def main() -> None:
-    if not all((TEACHER_USERNAME, TEACHER_PASSWORD, STUDENT_USERNAME)):
-        raise RuntimeError(
-            "请设置 E2E_TEACHER_USERNAME、E2E_TEACHER_PASSWORD、E2E_STUDENT_USERNAME 后运行浏览器回归。"
+def ensure_browser_accounts() -> tuple[list[int], str, str, str]:
+    if all((TEACHER_USERNAME, TEACHER_PASSWORD, STUDENT_USERNAME)):
+        return [], TEACHER_USERNAME, TEACHER_PASSWORD, STUDENT_USERNAME
+    marker = str(int(time.time()))
+    teacher_username = f"qa_teacher_browser_{marker}"
+    teacher_password = f"QaTeacherBrowser-{marker}-Aa9!"
+    student_username = f"qa_student_browser_{marker}"
+    student_password = f"QaStudentBrowser-{marker}-Aa9!"
+    with SessionLocal() as db:
+        result = db.execute(
+            text("INSERT INTO users (username,password_hash,nickname,role,current_stage,status) VALUES (:username,:password_hash,:username,'teacher','大一',1)"),
+            {"username": teacher_username, "password_hash": hash_password(teacher_password)},
         )
+        teacher_id = int(result.lastrowid)
+        db.execute(text("INSERT INTO teacher_profiles (user_id,display_name) VALUES (:id,:name)"), {"id": teacher_id, "name": teacher_username})
+        result = db.execute(
+            text("INSERT INTO users (username,password_hash,nickname,role,current_stage,status) VALUES (:username,:password_hash,:username,'student','大一',1)"),
+            {"username": student_username, "password_hash": hash_password(student_password)},
+        )
+        student_id = int(result.lastrowid)
+        db.commit()
+    return [teacher_id, student_id], teacher_username, teacher_password, student_username
+
+
+def cleanup_browser_accounts(account_ids: list[int]) -> None:
+    if not account_ids:
+        return
+    teacher_id, student_id = account_ids
+    with SessionLocal() as db:
+        db.execute(text("DELETE FROM auth_sessions WHERE user_id IN (:teacher,:student)"), {"teacher": teacher_id, "student": student_id})
+        db.execute(text("DELETE FROM teacher_profiles WHERE user_id=:id"), {"id": teacher_id})
+        db.execute(text("DELETE FROM users WHERE id IN (:teacher,:student)"), {"teacher": teacher_id, "student": student_id})
+        db.commit()
+
+
+def main() -> None:
+    account_ids, teacher_username, teacher_password, student_username = ensure_browser_accounts()
     marker = str(int(time.time()))
     class_name = f"浏览器回归班-{marker}"
     options = Options()
@@ -152,15 +214,27 @@ def main() -> None:
 
         driver.get(f"{BASE_URL}/auth?role=teacher&mode=login")
         wait_for_vue(driver, wait)
-        driver.find_element(By.CSS_SELECTOR, "input[autocomplete='username']").send_keys(TEACHER_USERNAME)
-        driver.find_element(By.CSS_SELECTOR, "input[autocomplete='current-password']").send_keys(TEACHER_PASSWORD)
+        driver.find_element(By.CSS_SELECTOR, "input[autocomplete='username']").send_keys(teacher_username)
+        driver.find_element(By.CSS_SELECTOR, "input[autocomplete='current-password']").send_keys(teacher_password)
         driver.find_element(By.CSS_SELECTOR, ".identity-submit").click()
         wait.until(lambda current: current.current_url.rstrip("/").endswith("/teacher"))
         wait.until(expected.presence_of_element_located((By.CSS_SELECTOR, ".teacher-sidebar")))
         assert_page_healthy(driver, "教师工作台")
+        assistant_orb = driver.find_element(By.CSS_SELECTOR, ".assistant-orb")
+        assert assistant_orb.is_displayed(), "教师端必须显示小逻入口"
+        assistant_orb.click()
+        wait.until(expected.visibility_of_element_located((By.CSS_SELECTOR, ".assistant-drawer.is-open")))
+        wait.until(
+            lambda current: "AI 教学助手"
+            in current.find_element(By.CSS_SELECTOR, ".assistant-drawer").text
+        )
+        close_assistant = driver.find_element(By.CSS_SELECTOR, ".assistant-head button[aria-label='关闭小逻']")
+        driver.execute_script("arguments[0].click();", close_assistant)
+        wait.until(lambda current: "is-open" not in current.find_element(By.CSS_SELECTOR, ".assistant-drawer").get_attribute("class"))
+        time.sleep(0.3)
         screenshot(driver, "01-dashboard")
 
-        expected_nav = ["工作台", "班级管理", "学生学情", "题库管理", "作业管理", "批改中心"]
+        expected_nav = ["工作台", "班级管理", "学生学情", "题库管理", "作业管理", "消息中心", "批改中心"]
         actual_nav = [
             item.text.strip()
             for item in driver.find_elements(By.CSS_SELECTOR, ".teacher-sidebar nav a strong")
@@ -193,12 +267,12 @@ def main() -> None:
         student_input = wait.until(
             expected.element_to_be_clickable((By.CSS_SELECTOR, "input[placeholder*='树虫']"))
         )
-        student_input.send_keys(STUDENT_USERNAME)
+        student_input.send_keys(student_username)
         driver.find_element(
             By.XPATH, "//form[contains(@class,'teacher-add-student-form')]//button[@type='submit']"
         ).click()
         wait.until(lambda current: "已加入" in current.find_element(By.TAG_NAME, "body").text)
-        assert STUDENT_USERNAME in driver.find_element(By.TAG_NAME, "body").text
+        assert student_username in driver.find_element(By.TAG_NAME, "body").text
 
         export_button = driver.find_element(
             By.XPATH, "//button[normalize-space()='导出名单']"
@@ -215,6 +289,30 @@ def main() -> None:
         confirm_dialog.find_element(By.CSS_SELECTOR, ".confirm-submit").click()
         wait.until(lambda current: "新的班级邀请码已生成" in current.find_element(By.TAG_NAME, "body").text)
         screenshot(driver, "03-class-created")
+
+        click_nav(driver, wait, "工作台", "/teacher")
+        ai_button = wait.until(expected.element_to_be_clickable((By.XPATH, "//section[contains(@class,'teacher-class-strip')]//button[contains(normalize-space(),'AI 解读')]")))
+        driver.execute_script("arguments[0].click();", ai_button)
+        drawer = wait.until(expected.visibility_of_element_located((By.CSS_SELECTOR, ".assistant-drawer.is-open")))
+        wait.until(expected.visibility_of_element_located((By.CSS_SELECTOR, ".assistant-drawer .ai-card")))
+        drawer_text = drawer.text
+        assert all(label in drawer_text for label in ("亮点", "风险点", "建议")), drawer_text
+        assert not driver.find_elements(By.CSS_SELECTOR, ".teacher-ai-insight-wrap"), "AI 卡片不应残留在教师页面内"
+        screenshot(driver, "03a-ai-drawer")
+        driver.execute_script("arguments[0].click();", driver.find_element(By.CSS_SELECTOR, ".assistant-head button[aria-label='关闭小逻']"))
+
+        click_nav(driver, wait, "消息中心", "/teacher/messages")
+        assert_page_healthy(driver, "消息中心")
+        driver.find_element(By.CSS_SELECTOR, ".new-conversation").click()
+        wait.until(expected.visibility_of_element_located((By.CSS_SELECTOR, ".contact-picker")))
+        wait.until(lambda current: student_username in current.find_element(By.CSS_SELECTOR, ".contact-picker").text)
+        contact_button = next(
+            button for button in driver.find_elements(By.CSS_SELECTOR, ".contact-picker-list > button")
+            if student_username in button.text
+        )
+        driver.execute_script("arguments[0].click();", contact_button)
+        wait.until(lambda current: current.find_elements(By.CSS_SELECTOR, ".conversation-list button.active"))
+        screenshot(driver, "03b-messages")
 
         click_nav(driver, wait, "学生学情", "/teacher/students")
         assert_page_healthy(driver, "学生学情")
@@ -300,6 +398,7 @@ def main() -> None:
             ("/teacher/questions/new", "新建题目", "10b-mobile-question-editor"),
             ("/teacher/assignments", "作业管理", "11-mobile-assignments"),
             ("/teacher/assignments/new", "布置作业", "11b-mobile-assignment-editor"),
+            ("/teacher/messages", "消息中心", "11c-mobile-messages"),
             ("/teacher/review", "批改中心", "12-mobile-review"),
         ]
         for path, heading, image_name in mobile_pages:
@@ -323,6 +422,7 @@ def main() -> None:
         if driver:
             driver.quit()
         cleanup_class(class_name)
+        cleanup_browser_accounts(account_ids)
 
 
 if __name__ == "__main__":
