@@ -14,6 +14,17 @@ TYPE_LABELS = {
 }
 
 
+class TeacherQuestionAIRequest(BaseModel):
+    model_config = {"str_strip_whitespace": True}
+
+    course: str = Field(min_length=1, max_length=128)
+    knowledge_tag: str = Field(min_length=1, max_length=160)
+    question_type: Literal["choice", "blank", "calculation", "proof", "comprehensive"] = "choice"
+    difficulty: int = Field(default=3, ge=1, le=5)
+    count: int = Field(default=1, ge=1, le=5)
+    requirements: str | None = Field(default=None, max_length=1000)
+
+
 class QuestionWriteRequest(BaseModel):
     question_type: Literal["choice", "blank", "calculation", "proof", "comprehensive"]
     stage: str = Field(min_length=2, max_length=16)

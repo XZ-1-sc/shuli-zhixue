@@ -50,6 +50,8 @@ def _question_dict(row: Any) -> dict[str, Any]:
     for key in ("created_at", "updated_at", "published_at"):
         item[key] = _iso(item.get(key))
     item["editable"] = bool(item.get("created_by"))
+    # AI provenance uses existing columns, so this works without later migrations.
+    item["ai_generated"] = bool(item.get("ai_generated")) or str(item.get("source_path") or "").startswith("teacher-ai/")
     item.setdefault("attachments", [])
     item.setdefault("analysis_attachments", [])
     return item
@@ -268,7 +270,11 @@ def _sync_question_attachments(
                 {"question_id": question_id, "file_id": file_id, "attachment_type": attachment_type, "sort_order": sort_order},
             )
 
-def _create_question_sync(teacher_id: int, payload: QuestionWriteRequest) -> dict[str, Any]:
+def _create_question_sync(
+    teacher_id: int, payload: QuestionWriteRequest, *, ai_source: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if ai_source is not None and (payload.publish_status != "draft" or payload.visibility != "class"):
+        raise HTTPException(status_code=422, detail="AI 出题只能保存为私有草稿。")
     with SessionLocal() as db:
         source_id = _teacher_question_source_id(db)
         knowledge_node_id = db.execute(
@@ -280,7 +286,7 @@ def _create_question_sync(teacher_id: int, payload: QuestionWriteRequest) -> dic
             "source_id": source_id,
             "created_by": teacher_id,
             "source_question_no": source_no,
-            "source_path": f"teacher/{teacher_id}/{source_no}",
+            "source_path": f"{'teacher-ai' if ai_source is not None else 'teacher'}/{teacher_id}/{source_no}",
             "knowledge_node_id": knowledge_node_id,
         }
         result = db.execute(
@@ -306,6 +312,8 @@ def _create_question_sync(teacher_id: int, payload: QuestionWriteRequest) -> dic
         question_id = int(result.lastrowid)
         _sync_question_attachments(db, teacher_id, question_id, payload.attachment_ids, payload.analysis_attachment_ids)
         _audit(db, teacher_id, "question.created", "question", question_id, {"status": payload.publish_status, "course": payload.course})
+        if ai_source is not None:
+            _audit(db, teacher_id, "question.ai_generated", "question", question_id, ai_source)
         db.commit()
         row = _get_owned_question(db, teacher_id, question_id)
         attachments = _question_attachments(db, question_id)

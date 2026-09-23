@@ -11,10 +11,17 @@ from ...services.teacher_ai_service import (
     generate_grade_comment_sync,
 )
 from ...services.assignment_report_service import generate_assignment_report_sync
+from ...services.teacher_question_generator import generate_teacher_questions_sync
+from ..teacher_schemas import TeacherQuestionAIRequest
 from ..teacher_schemas import AssignmentReportAIRequest, AssignmentSuggestionAIRequest, ClassInsightAIRequest, GradeCommentAIRequest
 
 
 router = APIRouter(prefix="/api/teacher/ai", tags=["teacher-ai"])
+
+
+@router.post("/generate-question")
+async def generate_question(payload: TeacherQuestionAIRequest, current: dict[str, Any] = Depends(require_teacher)) -> dict[str, Any]:
+    return await asyncio.to_thread(generate_teacher_questions_sync, int(current["id"]), payload)
 
 
 @router.post("/grade-comment")
