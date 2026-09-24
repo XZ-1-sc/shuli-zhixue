@@ -14,7 +14,7 @@
             <header><strong>我的班级</strong><span>{{ classes.length }} 个</span></header>
             <div v-if="classes.length" class="teacher-class-list">
               <button v-for="item in classes" :key="item.id" :class="{ active: selectedClassId === item.id }" type="button" @click="selectClass(item.id)">
-                <small>{{ item.stage }} · {{ item.course }}</small>
+                <small>{{ item.course }}</small>
                 <strong>{{ item.name }}</strong>
                 <span><b>{{ item.student_count }}</b> 名学生 · 今日 {{ item.active_today }} 人活跃</span>
                 <i>邀请码 {{ item.invite_code }}</i>
@@ -28,7 +28,7 @@
           <article v-if="detail.class" class="teacher-class-detail-panel">
             <header class="class-detail-heading">
               <div>
-                <small>{{ detail.class.stage }} · {{ detail.class.course }}</small>
+                <small>{{ detail.class.course }}</small>
                 <h2>{{ detail.class.name }}</h2>
                 <p>班级邀请码 <button type="button" @click="copyInvite">{{ detail.class.invite_code }} · 复制</button> <button type="button" @click="regenerateInvite">重新生成</button></p>
               </div>
@@ -46,11 +46,11 @@
               <header><div><strong>班级学生</strong><small>学习统计来自学生真实做题记录</small></div><span>{{ detail.members.length }} 人</span></header>
               <div v-if="detail.members.length" class="teacher-table-wrap">
                 <table>
-                  <thead><tr><th>学生</th><th>阶段</th><th>练习量</th><th>正确率</th><th>学习时长</th><th>最近活跃</th><th>操作</th></tr></thead>
+                  <thead><tr><th>学生</th><th>练习量</th><th>正确率</th><th>学习时长</th><th>最近活跃</th><th>操作</th></tr></thead>
                   <tbody>
                     <tr v-for="member in detail.members" :key="member.id">
                       <td><i>{{ member.username.slice(0, 1) }}</i><strong>{{ member.username }}</strong></td>
-                      <td>{{ member.current_stage }}</td><td>{{ member.practice_count }} 题</td>
+                      <td>{{ member.practice_count }} 题</td>
                       <td :class="masteryTone(member.accuracy)">{{ member.accuracy }}%</td><td>{{ member.study_hours }} h</td>
                       <td>{{ formatTime(member.last_active) }}</td>
                       <td class="teacher-row-actions"><RouterLink :to="`/teacher/students/${member.id}`">学情</RouterLink><RouterLink :to="`/teacher/preview/${member.id}`">预览</RouterLink><button class="teacher-remove-member" type="button" @click="removeStudent(member)">移出</button></td>
@@ -62,6 +62,7 @@
             </section>
 
             <AssignmentAnalytics :key="`class-analytics-${selectedClassId}`" scope="class" :scope-id="Number(selectedClassId)" />
+            <ClassDashboard :key="`class-dashboard-${selectedClassId}`" :class-id="Number(selectedClassId)" />
 
             <section class="teacher-panel advice-draft-panel">
               <header>
@@ -86,7 +87,6 @@
       <form class="teacher-modal" @submit.prevent="createClass">
         <header><div><small>{{ editingClassId ? '维护教学组织' : '新建教学组织' }}</small><h2>{{ editingClassId ? '编辑班级' : '创建班级' }}</h2></div><button type="button" aria-label="关闭" @click="closeModal">×</button></header>
         <label><span>班级名称</span><input v-model.trim="classForm.name" maxlength="100" placeholder="例如：高等数学 A 班" required /></label>
-        <label><span>学习阶段</span><select v-model="classForm.stage" @change="loadCourses"><option v-for="stage in stages" :key="stage.stage_name" :value="stage.stage_name">{{ stage.stage_name }} · {{ stage.title }}</option></select></label>
         <label><span>主要课程</span><select v-model="classForm.course" required><option v-for="course in courses" :key="course.course_name" :value="course.course_name">{{ course.course_name }}</option></select></label>
         <p v-if="createError" class="teacher-form-message is-error">{{ createError }}</p>
         <footer><button type="button" @click="closeModal">取消</button><button :disabled="creating" type="submit">{{ creating ? "正在保存..." : editingClassId ? "保存修改" : "创建班级" }}</button></footer>
@@ -137,6 +137,7 @@ import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import { apiDelete, apiGet, apiPost, apiPut } from "../api/client";
 import AssignmentAnalytics from "../components/teacher/AssignmentAnalytics.vue";
+import ClassDashboard from "../components/teacher/ClassDashboard.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
 import { requestConfirmation } from "../services/confirm";
 import { notify } from "../services/toast";
@@ -152,7 +153,6 @@ const createOpen = ref(false);
 const creating = ref(false);
 const createError = ref("");
 const editingClassId = ref(null);
-const stages = ref([]);
 const courses = ref([]);
 const studentUsername = ref("");
 const addingStudent = ref(false);
@@ -189,14 +189,11 @@ function masteryTone(value) { return value >= 80 ? "is-good" : value >= 60 ? "is
 function formatTime(value) { return value ? new Date(value).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "暂无记录"; }
 
 async function loadStages() {
-  const data = await apiGet("/api/stages");
-  stages.value = data.stages || [];
-  if (!stages.value.some((item) => item.stage_name === classForm.stage)) classForm.stage = stages.value[0]?.stage_name || "大一";
   await loadCourses();
 }
 
 async function loadCourses() {
-  const data = await apiGet("/api/courses", { stage: classForm.stage });
+  const data = await apiGet("/api/courses");
   courses.value = data.courses || [];
   classForm.course = courses.value[0]?.course_name || "";
 }

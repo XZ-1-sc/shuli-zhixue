@@ -102,6 +102,16 @@ def _parse_json_object(value: Any) -> dict[str, Any]:
         return {}
     return parsed if isinstance(parsed, dict) else {}
 
+def _parse_solution_steps(value: Any) -> list[dict[str, Any]]:
+    if not value:
+        return []
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    return [dict(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
 def _row_to_question(row: Any, include_answer: bool = False) -> dict[str, Any]:
     item = dict(row)
     options = {
@@ -115,6 +125,7 @@ def _row_to_question(row: Any, include_answer: bool = False) -> dict[str, Any]:
     item["key_steps"] = _parse_json_list(item.get("key_steps"))
     item["common_errors"] = _parse_json_list(item.get("common_errors"))
     item["mistake_tags"] = _parse_json_list(item.get("mistake_tags"))
+    item["solution_steps"] = _parse_solution_steps(item.get("solution_steps"))
     item["attachments"] = _parse_json_object(item.pop("question_attachments", None))
     item["attachments"].setdefault("question", [])
     item["attachments"].setdefault("analysis", [])
@@ -148,6 +159,9 @@ def _question_select_sql() -> str:
       q.key_steps,
       q.common_errors,
       q.mistake_tags,
+      q.solution_steps,
+      q.steps_source,
+      q.steps_review_status,
       (
         SELECT JSON_OBJECT(
           'question', COALESCE((

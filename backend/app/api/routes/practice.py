@@ -89,3 +89,15 @@ async def ai_similar_practice(
     current: dict[str, Any] = Depends(require_student_user),
 ) -> dict[str, Any]:
     return await asyncio.to_thread(generate_ai_similar_sync, int(current["id"]), payload)
+
+
+@router.post("/practice/ai-selfcheck")
+async def ai_selfcheck(
+    payload: AISimilarPracticeRequest,
+    current: dict[str, Any] = Depends(require_student_user),
+) -> dict[str, Any]:
+    payload.count = 1
+    result = await asyncio.to_thread(generate_ai_similar_sync, int(current["id"]), payload)
+    result["selfcheck"] = True
+    result["instruction"] = "限时 1 分钟独立完成；提交后仅作为掌握证据，不计入正式正确率。"
+    return result

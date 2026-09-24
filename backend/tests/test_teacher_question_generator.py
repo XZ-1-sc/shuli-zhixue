@@ -38,12 +38,14 @@ SCHEMA = [
         license_name TEXT, license_url TEXT, usage_note TEXT)""",
     """CREATE TABLE questions (
         id INTEGER PRIMARY KEY, source_id INTEGER, created_by INTEGER, visibility TEXT,
-        publish_status TEXT, version INTEGER DEFAULT 1, published_at TIMESTAMP, deleted_at TIMESTAMP,
+        publish_status TEXT, version INTEGER DEFAULT 1, ai_generated INTEGER DEFAULT 0,
+        source_question_id INTEGER, published_at TIMESTAMP, deleted_at TIMESTAMP,
         source_question_no TEXT, source_path TEXT, question_type TEXT, stage TEXT, course TEXT,
         knowledge_node_id INTEGER, knowledge_tag TEXT, fine_tag TEXT, difficulty INTEGER,
         question_text TEXT, option_a TEXT, option_b TEXT, option_c TEXT, option_d TEXT,
         correct_answer TEXT, standard_answer TEXT, analysis_text TEXT, key_steps TEXT,
-        common_errors TEXT, mistake_tags TEXT, created_at TIMESTAMP, updated_at TIMESTAMP)""",
+        common_errors TEXT, mistake_tags TEXT, solution_steps TEXT, steps_source TEXT,
+        steps_review_status TEXT, created_at TIMESTAMP, updated_at TIMESTAMP)""",
     """CREATE TABLE question_attachments (id INTEGER PRIMARY KEY, question_id INTEGER,
         uploaded_file_id INTEGER, attachment_type TEXT, sort_order INTEGER)""",
     """CREATE TABLE uploaded_files (id INTEGER PRIMARY KEY, original_name TEXT, mime_type TEXT, size_bytes INTEGER)""",
@@ -225,7 +227,8 @@ class TeacherQuestionGeneratorTests(unittest.TestCase):
         self.assertEqual(self.client.post(endpoint, json=self.payload).status_code, 401)
         with patch.object(security, "current_session_user", return_value={"id": 12, "role": "student"}):
             self.assertEqual(self.client.post(endpoint, json=self.payload).status_code, 403)
-        with patch.object(security, "current_session_user", return_value={"id": 11, "role": "teacher"}):
+        with patch.object(security, "current_session_user", return_value={"id": 11, "role": "teacher"}), \
+                patch.object(teacher_ai, "generate_teacher_questions_sync", side_effect=generator.generate_teacher_questions_sync):
             self.assertEqual(self.client.post(endpoint, json=self.payload | {"count": 6}).status_code, 422)
             response = self.client.post(endpoint, json=self.payload)
         self.assertEqual(response.status_code, 200)

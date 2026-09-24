@@ -9,6 +9,8 @@ from ..session import SessionLocal
 from ...agents.evaluator import evaluate
 from ...api.schemas import AnswerSubmissionRequest
 from ...services.scoring import _score_subjective
+from ...services.solution_service import ensure_solution_steps_sync, score_answer_steps
+from ...services.risk_service import create_help_signals_sync
 from .assessment import _assessment_after_submit_sync, _validate_assessment_question
 from .common import _get_user_exists
 from .diagnosis import _practice_review_brief_sync
@@ -92,11 +94,11 @@ def _submit_answer_sync(user_id: int, payload: AnswerSubmissionRequest) -> dict[
     insert_query = text(
         """
         INSERT INTO practice_records (
-          task_id, user_id, question_id, selected_answer, answer_text, is_correct,
+          task_id, user_id, question_id, selected_answer, answer_text, answer_steps, is_correct,
           score, mistake_tags, time_spent_seconds, practice_mode, review_status
         )
         VALUES (
-          :task_id, :user_id, :question_id, :selected_answer, :answer_text, :is_correct,
+          :task_id, :user_id, :question_id, :selected_answer, :answer_text, :answer_steps, :is_correct,
           :score, :mistake_tags, :time_spent_seconds, :practice_mode, :review_status
         )
         """
@@ -115,6 +117,7 @@ def _submit_answer_sync(user_id: int, payload: AnswerSubmissionRequest) -> dict[
                     "question_id": payload.question_id,
                     "selected_answer": selected or None,
                     "answer_text": answer_text or None,
+                    "answer_steps": json.dumps([step.strip() for step in payload.answer_steps if step.strip()], ensure_ascii=False) or None,
                     "is_correct": None if is_correct is None else (1 if is_correct else 0),
                     "score": score,
                     "mistake_tags": json.dumps(mistake_tags, ensure_ascii=False),
@@ -158,6 +161,15 @@ def _submit_answer_sync(user_id: int, payload: AnswerSubmissionRequest) -> dict[
         question_type=None,
         limit=3,
     )
+    solution = ensure_solution_steps_sync(payload.question_id, user_id)
+    step_feedback = score_answer_steps(payload.answer_steps, solution.get("steps") or [])
+    if payload.answer_steps:
+        with SessionLocal() as db:
+            db.execute(
+                text("UPDATE practice_records SET step_feedback=:feedback WHERE id=:record_id AND user_id=:user_id"),
+                {"feedback": json.dumps(step_feedback, ensure_ascii=False), "record_id": record_id, "user_id": user_id},
+            )
+            db.commit()
     response = {
         "task_id": payload.task_id,
         "record_id": record_id,
@@ -171,6 +183,10 @@ def _submit_answer_sync(user_id: int, payload: AnswerSubmissionRequest) -> dict[
         "standard_answer": question.get("standard_answer"),
         "analysis_text": question.get("analysis_text"),
         "key_steps": question.get("key_steps"),
+        "solution_steps": solution.get("steps") or [],
+        "solution_steps_source": solution.get("source"),
+        "solution_steps_review_status": solution.get("review_status"),
+        "step_feedback": step_feedback,
         "common_errors": question.get("common_errors"),
         "mistake_tags": mistake_tags,
         "next_recommendation": {
@@ -187,6 +203,7 @@ def _submit_answer_sync(user_id: int, payload: AnswerSubmissionRequest) -> dict[
     response["evaluation"] = evaluate(user_id, payload.task_id).model_dump()
     response["review_brief"] = _practice_review_brief_sync(user_id, payload.task_id)
     signal = _practice_companion_signal_sync(user_id, question)
+    signal["teacher_help_signals_created"] = create_help_signals_sync(user_id, question, signal["streak_wrong"])
     response["companion_signal"] = signal
     response["review_brief"]["companion"] = signal
     if signal["streak_wrong"] >= 3:

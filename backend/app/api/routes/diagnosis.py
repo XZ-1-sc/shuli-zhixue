@@ -17,6 +17,7 @@ from ...database.repositories.diagnosis import (
 from ...orchestrator import run_pipeline
 from ...security import require_student_user
 from ...services.student_ai_service import generate_weekly_digest_sync
+from ...services.ai_profile_service import persist_ai_profile_sync
 from ..schemas import GoalRequest
 
 
@@ -46,7 +47,7 @@ async def diagnose_user(current: dict[str, Any] = Depends(require_student_user))
                 "avg_time_seconds": local.get("avg_time_seconds", 0),
             }
         )
-    return {
+    result = {
         **local_diagnosis,
         "weak_points": structured_points,
         "confidence": pipeline["diagnosis"]["confidence"],
@@ -55,6 +56,9 @@ async def diagnose_user(current: dict[str, Any] = Depends(require_student_user))
         "recommended_question_ids": pipeline["recommended_question_ids"],
         "negotiation": pipeline["negotiation"],
     }
+    profile = await asyncio.to_thread(persist_ai_profile_sync, user_id, result)
+    result["trend"] = profile["trend"]
+    return result
 
 
 @router.get("/recommend")

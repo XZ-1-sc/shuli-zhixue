@@ -10,6 +10,8 @@
     </template>
     </PageHeader>
 
+    <PaperDraftCard v-if="!isEdit" :classes="classes" :initial-class-id="form.class_id" @created="openGeneratedDraft" />
+
     <form class="teacher-assignment-editor" @submit.prevent="save(false)">
       <section class="teacher-panel teacher-assignment-settings">
         <header><div><strong>1. 作业设置</strong><small>发布后学生会收到消息提醒</small></div></header>
@@ -25,13 +27,21 @@
         </div>
       </section>
 
+      <section v-if="isEdit" class="teacher-panel assignment-review-panel">
+        <header><div><strong>试卷质检</strong><small>检查重复、覆盖、限时、难度一致性与题干风险；结果只作建议</small></div><button type="button" :disabled="reviewing" @click="reviewPaper">{{ reviewing ? "质检中…" : "✦ 开始质检" }}</button></header>
+        <div v-if="reviewReport" :class="['review-summary', { passed: reviewReport.passed }]">
+          <strong>{{ reviewReport.passed ? "未发现高风险问题" : "建议先处理高风险问题" }}</strong><p>{{ reviewReport.summary }}</p>
+          <ul v-if="reviewReport.issues?.length"><li v-for="(item, index) in reviewReport.issues" :key="`${item.message}-${index}`" :class="`severity-${item.severity}`"><b>{{ item.severity === 'high' ? '高' : item.severity === 'medium' ? '中' : '低' }}</b><span>{{ item.message }}</span></li></ul>
+        </div>
+      </section>
+
       <section class="teacher-panel teacher-question-picker">
         <header>
           <div><strong>2. 选择题目</strong><small>已选择 {{ selectedIds.length }} 题，总分 {{ totalPoints }}</small></div>
           <div><input v-model="search" placeholder="搜索题干或知识点" @keyup.enter.prevent="loadQuestions" /><button type="button" @click="loadQuestions">搜索</button></div>
         </header>
         <div class="teacher-random-picker">
-          <div><strong>按班级智能抽题</strong><small>按所选班级的阶段与课程，从已发布中文题库中随机抽取，已有选择会保留。</small></div>
+          <div><strong>按班级智能抽题</strong><small>按所选班级课程从已发布中文题库中随机抽取，已有选择会保留。</small></div>
           <label><span>数量</span><input v-model.number="randomCount" type="number" min="1" max="50" /></label>
           <button class="teacher-secondary-action" type="button" :disabled="randomizing" @click="randomSelect">{{ randomizing ? "抽取中…" : "随机选题" }}</button>
           <button class="teacher-ai-paper-action" type="button" :disabled="suggesting" @click="requestSuggestion">{{ suggesting ? "分析中…" : "✦ AI 建议组卷" }}</button>
@@ -48,7 +58,7 @@
         <div v-else class="teacher-picker-list">
           <label v-for="item in questions" :key="item.id" :class="{ selected: selectedIds.includes(item.id) }">
             <input v-model="selectedIds" type="checkbox" :value="item.id" :disabled="!selectedIds.includes(item.id) && selectedIds.length >= 100" />
-            <span><small>{{ item.type_label }} · {{ item.stage }} · {{ item.course }}</small><strong>{{ item.question_text }}</strong><em>{{ item.knowledge_tag }} / {{ item.fine_tag }} · 难度 {{ item.difficulty }}</em></span>
+            <span><small>{{ item.type_label }} · {{ item.course }}</small><strong>{{ item.question_text }}</strong><em>{{ item.knowledge_tag }} / {{ item.fine_tag }} · 难度 {{ item.difficulty }}</em></span>
             <input v-if="selectedIds.includes(item.id)" v-model.number="pointMap[item.id]" class="point-input" type="number" min="1" max="100" @click.stop />
             <b>分</b>
           </label>
@@ -63,7 +73,7 @@
         <button class="teacher-primary-action" :disabled="saving || !selectedIds.length" type="button" @click="save(true)">{{ saving ? "处理中…" : "发布给学生" }}</button>
       </footer>
     </form>
-    <QuestionImportDialog :open="paperImportOpen" mode="assignment" :initial-stage="selectedClass?.stage || ''" :initial-course="selectedClass?.course || ''" :selection-limit="Math.max(0, 100 - selectedIds.length)" @close="paperImportOpen = false" @imported="handlePaperImported" />
+    <QuestionImportDialog :open="paperImportOpen" mode="assignment" :initial-course="selectedClass?.course || ''" :selection-limit="Math.max(0, 100 - selectedIds.length)" @close="paperImportOpen = false" @imported="handlePaperImported" />
   </section>
 </template>
 
@@ -73,6 +83,7 @@ import { RouterLink, useRoute, useRouter } from "vue-router";
 import { apiGet, apiPost, apiPut } from "../api/client";
 import PageHeader from "../components/ui/PageHeader.vue";
 import QuestionImportDialog from "../components/QuestionImportDialog.vue";
+import PaperDraftCard from "../components/teacher/PaperDraftCard.vue";
 
 const route = useRoute();
 const router = useRouter();
@@ -93,6 +104,8 @@ const applyingSuggestion = ref(false);
 const aiSuggestion = ref(null);
 const loading = ref(true);
 const saving = ref(false);
+const reviewing = ref(false);
+const reviewReport = ref(null);
 const error = ref("");
 const form = reactive({
   class_id: "",
@@ -141,11 +154,10 @@ async function randomSelect() {
     const requested = Math.max(1, Math.min(remaining, 50, Number(randomCount.value || 10)));
     let data = await apiGet("/api/teacher/questions/random", {
       count: requested,
-      stage: selectedClass.stage,
       course: selectedClass.course
     });
     if ((data.items || []).length < requested) {
-      data = await apiGet("/api/teacher/questions/random", { count: requested, stage: selectedClass.stage });
+      data = await apiGet("/api/teacher/questions/random", { count: requested, course: selectedClass.course });
     }
     const ids = (data.items || []).map((item) => Number(item.id));
     selectedIds.value = Array.from(new Set([...selectedIds.value.map(Number), ...ids]));
@@ -156,7 +168,7 @@ async function randomSelect() {
     ids.forEach((id) => { if (!pointMap[id]) pointMap[id] = 10; });
     randomMessage.value = ids.length
       ? `已随机加入 ${ids.length} 道中文题，当前共选择 ${selectedIds.value.length} 道。`
-      : "当前班级阶段暂无可用中文题，请先到题库发布题目。";
+      : "当前班级课程暂无可用中文题，请先到题库发布题目。";
     randomError.value = !ids.length;
   } catch (exception) {
     randomError.value = true;
@@ -180,7 +192,7 @@ async function applySuggestion() {
   try {
     const picked = [];
     for (const item of aiSuggestion.value.knowledge_tags || []) {
-      const data = await apiGet("/api/teacher/questions", { scope: "all", publish_status: "published", stage: selectedClass.value.stage, course: selectedClass.value.course, search: item.tag, page: 1, page_size: Math.min(100, Math.max(20, item.count * 4)) });
+      const data = await apiGet("/api/teacher/questions", { scope: "all", publish_status: "published", course: selectedClass.value.course, search: item.tag, page: 1, page_size: Math.min(100, Math.max(20, item.count * 4)) });
       picked.push(...(data.items || []).filter((question) => Number(question.difficulty) <= Number(item.difficulty) + 1).slice(0, item.count));
     }
     const ids = picked.map((item) => Number(item.id));
@@ -196,7 +208,7 @@ async function applySuggestion() {
 function openPaperImport() {
   if (!selectedClass.value) {
     randomError.value = true;
-    randomMessage.value = "请先选择班级，系统会用班级的阶段和课程归类试卷题目。";
+    randomMessage.value = "请先选择班级，系统会用班级课程归类试卷题目。";
     return;
   }
   if (selectedIds.value.length >= 100) {
@@ -224,6 +236,18 @@ function clearSelection() {
   selectedIds.value = [];
   randomMessage.value = "已清空所选题目。";
   randomError.value = false;
+}
+
+async function openGeneratedDraft(data) {
+  const assignmentId = data.assignment?.id;
+  if (assignmentId) await router.push(`/teacher/assignments/${assignmentId}/edit`);
+}
+
+async function reviewPaper() {
+  reviewing.value = true; error.value = "";
+  try { reviewReport.value = await apiPost("/api/teacher/ai/assignment-review", { assignment_id: Number(route.params.assignmentId) }); }
+  catch (exception) { error.value = exception.message || "试卷质检失败。"; }
+  finally { reviewing.value = false; }
 }
 
 async function save(publish) {
@@ -288,4 +312,5 @@ onMounted(async () => {
 
 <style scoped>
 .teacher-ai-paper-action{min-height:38px;padding:0 13px;border:1px solid rgba(46, 125, 140, 0.38);border-radius:9px;color:#287381;background:rgba(46, 125, 140, 0.07);font-weight:850}.teacher-ai-paper-card{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;margin:12px 0;padding:14px;border:1px solid rgba(46, 125, 140, 0.25);border-radius:12px;background:rgba(46, 125, 140, 0.05)}.teacher-ai-paper-card small,.teacher-ai-paper-card strong{display:block}.teacher-ai-paper-card small{color:#287381}.teacher-ai-paper-card strong{margin-top:4px;color:#33302b;font-size:12px;line-height:1.55}.teacher-ai-paper-card ul{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:7px;margin:0;padding:0;list-style:none}.teacher-ai-paper-card li{display:flex;gap:8px;padding:7px 9px;border-radius:8px;background:rgba(255,255,255,.04);font-size:11px}.teacher-ai-paper-card li em{color:#706b62}.teacher-ai-paper-card>button{grid-column:2;grid-row:1;min-height:36px;padding:0 12px;border-radius:9px;color:#ffffff;background:#2e7d8c;font-weight:850}@media(max-width:620px){.teacher-ai-paper-card{grid-template-columns:1fr}.teacher-ai-paper-card>button{grid-column:1;grid-row:auto}}
+.assignment-review-panel{display:grid;gap:12px}.assignment-review-panel>header{display:flex;align-items:center;justify-content:space-between;gap:12px}.assignment-review-panel>header>div{display:grid;gap:3px}.assignment-review-panel>header small{color:#706b62;font-size:11px}.assignment-review-panel>header button{min-height:36px;padding:0 12px;color:#287381;border:1px solid rgba(46,125,140,.32);background:#fff;font-weight:850}.review-summary{padding:13px;color:#75403b;border-left:3px solid #b4554a;background:#fbefec}.review-summary.passed{color:#2f6f4d;border-left-color:#347a56;background:#edf6ee}.review-summary p{margin:5px 0 0}.review-summary ul{display:grid;gap:6px;margin:10px 0 0;padding:0;list-style:none}.review-summary li{display:flex;gap:8px;align-items:flex-start;padding:7px;background:#fff}.review-summary li b{min-width:20px;text-align:center}.review-summary .severity-high b{color:#ad5046}.review-summary .severity-medium b{color:#8f6b16}@media(max-width:620px){.assignment-review-panel>header{align-items:flex-start;flex-direction:column}}
 </style>

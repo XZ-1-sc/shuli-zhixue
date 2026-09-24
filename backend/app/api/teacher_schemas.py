@@ -14,17 +14,6 @@ TYPE_LABELS = {
 }
 
 
-class TeacherQuestionAIRequest(BaseModel):
-    model_config = {"str_strip_whitespace": True}
-
-    course: str = Field(min_length=1, max_length=128)
-    knowledge_tag: str = Field(min_length=1, max_length=160)
-    question_type: Literal["choice", "blank", "calculation", "proof", "comprehensive"] = "choice"
-    difficulty: int = Field(default=3, ge=1, le=5)
-    count: int = Field(default=1, ge=1, le=5)
-    requirements: str | None = Field(default=None, max_length=1000)
-
-
 class QuestionWriteRequest(BaseModel):
     question_type: Literal["choice", "blank", "calculation", "proof", "comprehensive"]
     stage: str = Field(min_length=2, max_length=16)
@@ -129,3 +118,89 @@ class AssignmentSuggestionAIRequest(BaseModel):
 
 class AssignmentReportAIRequest(BaseModel):
     assignment_id: int = Field(ge=1)
+
+
+class TeacherQuestionAIRequest(BaseModel):
+    model_config = {"str_strip_whitespace": True}
+
+    course: str = Field(min_length=1, max_length=128)
+    knowledge_tag: str = Field(min_length=1, max_length=160)
+    question_type: Literal["choice", "blank", "calculation", "proof", "comprehensive"] = "choice"
+    difficulty: int = Field(default=3, ge=1, le=5)
+    count: int = Field(default=1, ge=1, le=5)
+    requirements: str | None = Field(default=None, max_length=1000)
+
+
+class PaperIntentRequest(BaseModel):
+    class_id: int = Field(ge=1)
+    knowledge_tags: list[str] = Field(default_factory=list, max_length=20)
+    difficulty_mix: dict[str, float] = Field(default_factory=lambda: {"easy": 0.2, "medium": 0.5, "hard": 0.3})
+    count: int = Field(default=10, ge=1, le=100)
+    types: list[Literal["choice", "blank", "calculation", "proof", "comprehensive"]] = Field(default_factory=list, max_length=5)
+    timed_minutes: int | None = Field(default=None, ge=5, le=600)
+    note: str = Field(default="", max_length=1000)
+    title: str | None = Field(default=None, max_length=160)
+    allow_ai_supplement: bool = False
+
+    @model_validator(mode="after")
+    def validate_mix(self) -> "PaperIntentRequest":
+        allowed = {"easy", "medium", "hard"}
+        self.difficulty_mix = {key: max(0.0, float(value)) for key, value in self.difficulty_mix.items() if key in allowed}
+        if not self.difficulty_mix or sum(self.difficulty_mix.values()) <= 0:
+            raise ValueError("难度配比必须包含有效权重。")
+        self.knowledge_tags = list(dict.fromkeys(item.strip() for item in self.knowledge_tags if item.strip()))
+        self.types = list(dict.fromkeys(self.types))
+        return self
+
+
+class PaperTextRequest(BaseModel):
+    message: str = Field(min_length=2, max_length=2000)
+    class_id: int | None = Field(default=None, ge=1)
+
+
+class TeacherExperienceRequest(BaseModel):
+    experience_text: str = Field(min_length=2, max_length=4000)
+    question_id: int | None = Field(default=None, ge=1)
+    knowledge_tag: str | None = Field(default=None, max_length=160)
+    class_id: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "TeacherExperienceRequest":
+        if not self.question_id and not (self.knowledge_tag or "").strip():
+            raise ValueError("请关联一道题或一个知识点。")
+        return self
+
+
+class TeacherPreferenceRequest(BaseModel):
+    tone: str = Field(default="清晰、鼓励、重方法", min_length=1, max_length=64)
+    scoring_strictness: Literal["lenient", "balanced", "strict"] = "balanced"
+    preferred_types: list[Literal["choice", "blank", "calculation", "proof", "comprehensive"]] = Field(default_factory=list, max_length=5)
+    style_notes: str | None = Field(default=None, max_length=2000)
+    assistant_enabled: bool = True
+
+
+class ArtifactGenerateRequest(BaseModel):
+    kind: Literal[
+        "next_lesson", "student_consultation", "remediation", "weekly_report",
+        "substitute_handoff", "semester_review", "layered_teaching", "cross_class",
+        "pace_review", "question_health", "breakpoint_review", "engagement_review"
+    ]
+    class_id: int | None = Field(default=None, ge=1)
+    student_id: int | None = Field(default=None, ge=1)
+    assignment_id: int | None = Field(default=None, ge=1)
+    note: str = Field(default="", max_length=1000)
+
+
+class PregradeDecisionRequest(BaseModel):
+    action: Literal["accepted", "rejected"]
+    score: float | None = Field(default=None, ge=0, le=100)
+    feedback: str | None = Field(default=None, max_length=4000)
+    correction_required: bool = False
+
+
+class RiskStatusRequest(BaseModel):
+    status: Literal["acknowledged", "resolved"]
+
+
+class HelpSignalStatusRequest(BaseModel):
+    status: Literal["contacted", "resolved"]

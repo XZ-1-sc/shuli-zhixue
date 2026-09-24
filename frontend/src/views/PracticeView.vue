@@ -3,7 +3,7 @@
     <section class="practice-toolbar" aria-label="练习控制栏">
       <div class="practice-title-block">
         <strong>{{ isAssessment ? "数学基础首测" : "做题训练" }}</strong>
-        <small v-if="isAssessment">{{ assessmentStage }} · 完成后由小逻生成学习计划</small>
+        <small v-if="isAssessment">完成后由小逻生成学习计划</small>
       </div>
       <div class="practice-mode-switch">
         <button :class="{ active: !isAssessment && filters.mode !== 'mock' }" type="button" @click="setMode('daily')">随机练习</button>
@@ -113,6 +113,11 @@
           </div>
           <div v-else-if="currentQuestion" class="subjective-answer-block">
             <textarea v-model="answerText" :disabled="Boolean(result)" placeholder="在这里写出关键步骤或证明思路，也可以上传纸面作答图片。"></textarea>
+            <section class="answer-step-editor">
+              <header><strong>分步作答</strong><small>逐步填写，便于小逻定位第一处偏差</small></header>
+              <label v-for="(_, index) in answerSteps" :key="index"><span>{{ index + 1 }}</span><input v-model="answerSteps[index]" :disabled="Boolean(result)" :placeholder="`第 ${index + 1} 步`" /><button v-if="!result && answerSteps.length > 1" type="button" @click="answerSteps.splice(index, 1)">×</button></label>
+              <button v-if="!result && answerSteps.length < 20" type="button" @click="answerSteps.push('')">＋ 添加步骤</button>
+            </section>
 
             <section class="answer-upload-box" :class="{ 'is-dragging': dragging }" @dragenter.prevent="dragging = true" @dragover.prevent @dragleave.prevent="dragging = false" @drop.prevent="handleDrop">
               <div>
@@ -188,12 +193,14 @@
             <h3>标准答案</h3>
             <p>{{ result.standard_answer }}</p>
           </section>
-          <section class="key-steps-ref">
-            <h3>关键步骤</h3>
-            <ol>
-              <li v-for="step in result.key_steps" :key="step">{{ step }}</li>
-            </ol>
-          </section>
+          <StepSolution
+            :question-id="Number(currentQuestion.id)"
+            :record-id="Number(result.record_id)"
+            :initial-steps="result.solution_steps || []"
+            :step-feedback="result.step_feedback"
+            :source="result.solution_steps_source"
+            :knowledge-tag="currentQuestion.knowledge_tag"
+          />
           <section class="mistake-box">
             <h3>解析与常见错误</h3>
             <p>{{ result.analysis_text }}</p>
@@ -206,6 +213,15 @@
             <span>›</span>
           </RouterLink>
           <button class="ask-xiaoluo-button" type="button" @click="openQuestionAssistant">◉ 问小逻：这题为什么错？</button>
+          <button v-if="result.is_correct === false" class="chain-recovery-button" type="button" :disabled="recoveryLoading" @click="loadChainRecovery">
+            {{ recoveryLoading ? "正在分析前置知识…" : "◎ 小逻推荐补根路径" }}
+          </button>
+          <section v-if="recovery" class="chain-recovery-card">
+            <small>{{ recovery.strategy === "repair_prerequisite" ? "先补前置" : "继续加固" }}</small>
+            <strong>{{ recovery.target.knowledge_tag || recovery.target.course }}</strong>
+            <p>{{ recovery.reason }}</p>
+            <RouterLink :to="{ path: '/practice', query: { course: recovery.target.course, knowledge_tag: recovery.target.knowledge_tag, limit: 3 } }">按推荐练 3 题 ›</RouterLink>
+          </section>
           <button class="ai-similar-button" type="button" :disabled="similarLoading" @click="generateSimilarQuestions">
             {{ similarLoading ? "小逻正在出题…" : "✦ AI 出题" }}
           </button>
@@ -223,6 +239,16 @@
                 <strong>{{ similarChecked[question.id].label }}</strong><p>参考答案：{{ question.standard_answer }}</p><small>{{ question.analysis_text }}</small>
               </div>
             </article>
+          </section>
+          <section class="question-discussion">
+            <header><div><small>答后讨论</small><strong>同题思路与教师精选</strong></div><span>{{ comments.length }} 条</span></header>
+            <p v-if="commentsLoading">正在加载讨论…</p>
+            <article v-for="comment in comments" :key="comment.id" :class="{ best: comment.is_best }">
+              <header><strong>{{ comment.author }}</strong><em v-if="comment.is_best">教师精选</em><small>{{ comment.author_role === 'teacher' ? '教师' : '同学' }}</small></header>
+              <p>{{ comment.content }}</p><div v-if="comment.images?.length" class="comment-images"><a v-for="image in comment.images" :key="image.id" :href="image.url" target="_blank"><img :src="image.url" alt="评论图片" /></a></div>
+              <footer><button type="button" :disabled="comment.liked" @click="upvoteComment(comment)">△ {{ comment.upvotes }}</button><button type="button" @click="askAboutComment(comment)">问小逻</button></footer>
+            </article>
+            <form @submit.prevent="postComment"><textarea v-model="commentText" maxlength="3000" placeholder="分享你的解题思路或提出具体疑问"></textarea><div v-if="commentImages.length" class="comment-image-chips"><span v-for="file in commentImages" :key="file.id">{{ file.name }}</span></div><footer><button type="button" @click="commentImageInput?.click()">上传图片</button><input ref="commentImageInput" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden @change="uploadCommentImages" /><button type="submit" :disabled="commentPosting || (!commentText.trim() && !commentImages.length)">{{ commentPosting ? '发布中…' : '发布讨论' }}</button></footer></form>
           </section>
         </template>
         <section v-else-if="result?.pending_review" class="review-pending-panel">
@@ -255,6 +281,7 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { onBeforeRouteUpdate, RouterLink, useRoute, useRouter } from "vue-router";
 
 import { apiDelete, apiGet, apiPost, apiUpload } from "../api/client";
+import StepSolution from "../components/student/StepSolution.vue";
 import { useUserStore } from "../stores/user";
 
 const emit = defineEmits(["open-auth"]);
@@ -267,6 +294,7 @@ const questions = ref([]);
 const currentIndex = ref(0);
 const selectedAnswer = ref("");
 const answerText = ref("");
+const answerSteps = ref([""]);
 const result = ref(null);
 const attempts = reactive({});
 const attachmentsByQuestion = reactive({});
@@ -279,9 +307,12 @@ const dragging = ref(false);
 const imageInput = ref(null);
 const assessmentReport = ref(null);
 const similarLoading = ref(false);
+const recoveryLoading = ref(false);
+const recovery = ref(null);
 const similarQuestions = ref([]);
 const similarAnswers = reactive({});
 const similarChecked = reactive({});
+const comments = ref([]), commentsLoading = ref(false), commentText = ref(""), commentImages = ref([]), commentPosting = ref(false), commentImageInput = ref(null);
 const assessmentStage = ref("");
 const startedAt = ref(Date.now());
 const sessionStartedAt = ref(Date.now());
@@ -372,10 +403,12 @@ function countByType(type) {
 function resetCurrentDraft() {
   selectedAnswer.value = "";
   answerText.value = "";
+  answerSteps.value = [""];
   result.value = null;
   uploadError.value = "";
   noteSaved.value = false;
   similarQuestions.value = [];
+  recovery.value = null;
   Object.keys(similarAnswers).forEach((key) => delete similarAnswers[key]);
   Object.keys(similarChecked).forEach((key) => delete similarChecked[key]);
   startedAt.value = Date.now();
@@ -383,7 +416,9 @@ function resetCurrentDraft() {
   if (saved) {
     selectedAnswer.value = saved.selected_answer || "";
     answerText.value = saved.answer_text || "";
+    answerSteps.value = saved.answer_steps?.length ? [...saved.answer_steps] : [""];
     result.value = saved;
+    loadComments();
   }
 }
 
@@ -549,6 +584,7 @@ async function submitAnswer() {
       question_id: currentQuestion.value.id,
       selected_answer: selectedAnswer.value || null,
       answer_text: answerText.value.trim() || null,
+      answer_steps: answerSteps.value.map(step => step.trim()).filter(Boolean),
       attachment_ids: attachments.value.map((file) => file.id),
       time_spent_seconds: elapsedSeconds.value,
       practice_mode: filters.mode
@@ -556,6 +592,7 @@ async function submitAnswer() {
     const saved = { ...response, selected_answer: selectedAnswer.value || null, answer_text: answerText.value || null };
     attempts[currentQuestion.value.id] = saved;
     result.value = saved;
+    await loadComments();
     if (response.assessment_complete && response.assessment_report) {
       assessmentReport.value = response.assessment_report;
       window.dispatchEvent(new CustomEvent("xiaoluo:assessment-complete", { detail: response.assessment_report }));
@@ -658,11 +695,54 @@ async function generateSimilarQuestions() {
   finally { similarLoading.value = false; }
 }
 
-function checkSimilar(question) {
+async function loadComments() {
+  if (!currentQuestion.value || !result.value) { comments.value = []; return; }
+  commentsLoading.value = true;
+  try { const data = await apiGet(`/api/questions/${currentQuestion.value.id}/comments`); comments.value = data.items || []; }
+  catch { comments.value = []; }
+  finally { commentsLoading.value = false; }
+}
+async function uploadCommentImages(event) {
+  const files = Array.from(event.target.files || []).slice(0, Math.max(0, 5 - commentImages.value.length));
+  if (!files.length) return;
+  const form = new FormData(); files.forEach(file => form.append("files", file));
+  try { const data = await apiUpload("/api/uploads/comment-images", form); commentImages.value.push(...(data.files || [])); }
+  catch (error) { pageError.value = error.message; }
+  finally { if (commentImageInput.value) commentImageInput.value.value = ""; }
+}
+async function postComment() {
+  if (!currentQuestion.value) return; commentPosting.value = true;
+  try { await apiPost(`/api/questions/${currentQuestion.value.id}/comments`, { content: commentText.value, image_ids: commentImages.value.map(item => item.id) }); commentText.value = ""; commentImages.value = []; await loadComments(); }
+  catch (error) { pageError.value = error.message; }
+  finally { commentPosting.value = false; }
+}
+async function upvoteComment(comment) { try { const data = await apiPost(`/api/comments/${comment.id}/upvote`); comment.liked = true; comment.upvotes = data.upvotes; } catch (error) { pageError.value = error.message; } }
+function askAboutComment(comment) { window.dispatchEvent(new CustomEvent("xiaoluo:open", { detail: { prompt: `请判断这条同题讨论是否合理，并结合标准解法解释：${comment.content || '图片思路'}`, context: { type: "question", question_id: currentQuestion.value.id, record_id: result.value.record_id }, autoSend: true } })); }
+
+async function checkSimilar(question) {
   const answer = String(similarAnswers[question.id] || "").trim();
-  const expected = String(question.correct_answer || "").trim();
-  const correct = question.question_type === "choice" ? answer.toUpperCase() === expected.toUpperCase() : null;
-  similarChecked[question.id] = { correct, label: correct === true ? "回答正确" : correct === false ? "先对照解析找出第一处差异" : "已展开参考答案，请自行逐步核对" };
+  try {
+    const data = await apiPost("/api/practice/ai-selfcheck/submit", {
+      task_id: `transfer-${Date.now()}`,
+      source_question_id: currentQuestion.value.id,
+      generated_question: question.question_text,
+      selected_answer: question.question_type === "choice" ? answer : null,
+      answer_text: question.question_type === "choice" ? null : answer,
+      expected_answer: question.correct_answer || question.standard_answer,
+      knowledge_tag: question.knowledge_tag || currentQuestion.value.knowledge_tag,
+      evidence_type: "transfer",
+      time_spent_seconds: 0
+    });
+    similarChecked[question.id] = { ...data, correct: data.is_correct, label: data.is_correct ? "回答正确，已形成迁移证据" : "先对照解析找出第一处差异" };
+  } catch (exception) { pageError.value = exception.message || "迁移证据保存失败。"; }
+}
+
+async function loadChainRecovery() {
+  if (!result.value?.record_id) return;
+  recoveryLoading.value = true; pageError.value = "";
+  try { recovery.value = await apiPost("/api/recommend/chain-recovery", { record_id: result.value.record_id }); }
+  catch (exception) { pageError.value = exception.message || "补根路径分析失败。"; }
+  finally { recoveryLoading.value = false; }
 }
 
 function handleKeydown(event) {
@@ -674,7 +754,7 @@ function handleKeydown(event) {
 }
 
 watch(scratchText, (value) => localStorage.setItem("math_brain_scratch", value));
-watch(resultForCurrent, (value) => { result.value = value; });
+watch(resultForCurrent, (value) => { result.value = value; if (value) loadComments(); else comments.value = []; });
 
 onBeforeRouteUpdate(async (to) => {
   filters.stage = to.query.stage || "";

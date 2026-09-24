@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Any
 
@@ -166,17 +167,42 @@ def _update_assignment_sync(teacher_id: int, assignment_id: int, payload: Assign
         points = payload.points or [round(100 / len(payload.question_ids), 2)] * len(payload.question_ids)
         total_score = round(sum(points), 2)
         next_status = "published" if payload.publish else "draft"
+        previous_rows = db.execute(
+            text("SELECT question_id,points,sort_order FROM assignment_questions WHERE assignment_id=:id ORDER BY sort_order"),
+            {"id": assignment_id},
+        ).mappings().all()
+        previous_ids = [int(row["question_id"]) for row in previous_rows]
+        adjustment = None
+        if bool(assignment.get("ai_generated")):
+            next_ids = [int(value) for value in payload.question_ids]
+            previous_points = {int(row["question_id"]): float(row["points"] or 0) for row in previous_rows}
+            next_points = {question_id: float(point) for question_id, point in zip(next_ids, points)}
+            adjustment = {
+                "removed_question_ids": [question_id for question_id in previous_ids if question_id not in next_ids],
+                "added_question_ids": [question_id for question_id in next_ids if question_id not in previous_ids],
+                "reordered": [question_id for question_id in next_ids if question_id in previous_ids]
+                != [question_id for question_id in previous_ids if question_id in next_ids],
+                "point_changes": [
+                    {"question_id": question_id, "from": previous_points[question_id], "to": next_points[question_id]}
+                    for question_id in next_ids
+                    if question_id in previous_points and previous_points[question_id] != next_points[question_id]
+                ],
+                "title_changed": str(assignment.get("title") or "") != payload.title.strip(),
+                "time_limit_changed": assignment.get("time_limit_minutes") != payload.time_limit_minutes,
+                "saved_at": datetime.now().isoformat(timespec="seconds"),
+            }
         db.execute(
             text(
                 """
                 UPDATE assignments SET class_id=:class_id,title=:title,description=:description,
                   status=:status,starts_at=:starts_at,due_at=:due_at,time_limit_minutes=:time_limit,
                   max_attempts=:max_attempts,show_analysis_after_submit=:show_analysis,
-                  total_score=:total_score,published_at=CASE WHEN :status='published' THEN NOW() ELSE NULL END
+                  total_score=:total_score,published_at=CASE WHEN :status='published' THEN NOW() ELSE NULL END,
+                  teacher_adjustments_json=COALESCE(:teacher_adjustments_json,teacher_adjustments_json)
                 WHERE id=:assignment_id AND teacher_id=:teacher_id
                 """
             ),
-            {"class_id": payload.class_id, "title": payload.title.strip(), "description": (payload.description or "").strip() or None, "status": next_status, "starts_at": payload.starts_at, "due_at": payload.due_at, "time_limit": payload.time_limit_minutes, "max_attempts": payload.max_attempts, "show_analysis": 1 if payload.show_analysis_after_submit else 0, "total_score": total_score, "assignment_id": assignment_id, "teacher_id": teacher_id},
+            {"class_id": payload.class_id, "title": payload.title.strip(), "description": (payload.description or "").strip() or None, "status": next_status, "starts_at": payload.starts_at, "due_at": payload.due_at, "time_limit": payload.time_limit_minutes, "max_attempts": payload.max_attempts, "show_analysis": 1 if payload.show_analysis_after_submit else 0, "total_score": total_score, "teacher_adjustments_json": json.dumps(adjustment, ensure_ascii=False) if adjustment else None, "assignment_id": assignment_id, "teacher_id": teacher_id},
         )
         db.execute(text("DELETE FROM assignment_questions WHERE assignment_id=:id"), {"id": assignment_id})
         for index, (question_id, point) in enumerate(zip(payload.question_ids, points), start=1):

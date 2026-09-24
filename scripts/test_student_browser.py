@@ -128,6 +128,57 @@ def assert_assistant_clear(driver: webdriver.Edge, viewport: str, path: str) -> 
     assert not collisions, {"viewport": viewport, "path": path, "collisions": collisions}
 
 
+def wait_for_assistant_open(driver: webdriver.Edge, wait: WebDriverWait) -> None:
+    wait.until(
+        lambda current: "is-open"
+        in current.find_element(By.CSS_SELECTOR, ".assistant-drawer").get_attribute("class")
+    )
+    time.sleep(0.35)
+
+
+def close_assistant(driver: webdriver.Edge, wait: WebDriverWait) -> None:
+    driver.find_element(By.CSS_SELECTOR, ".drawer-actions button:last-child").click()
+    wait.until(
+        lambda current: "is-open"
+        not in current.find_element(By.CSS_SELECTOR, ".assistant-drawer").get_attribute("class")
+    )
+    time.sleep(0.35)
+
+
+def assert_roadmap_actions(driver: webdriver.Edge, viewport: str) -> None:
+    layout = driver.execute_script(
+        """
+        const buttons = [...document.querySelectorAll('.plan-title-actions .plan-action-button')];
+        if (buttons.length !== 2) return {count: buttons.length};
+        const rects = buttons.map((button) => {
+          const rect = button.getBoundingClientRect();
+          return {
+            left: rect.left,
+            right: rect.right,
+            top: rect.top,
+            bottom: rect.bottom,
+            width: rect.width,
+            height: rect.height,
+            clientWidth: button.clientWidth,
+            scrollWidth: button.scrollWidth
+          };
+        });
+        const overlapWidth = Math.min(rects[0].right, rects[1].right) - Math.max(rects[0].left, rects[1].left);
+        const overlapHeight = Math.min(rects[0].bottom, rects[1].bottom) - Math.max(rects[0].top, rects[1].top);
+        return {count: buttons.length, rects, overlapWidth, overlapHeight};
+        """
+    )
+    assert layout["count"] == 2, {"viewport": viewport, "layout": layout}
+    assert layout["overlapWidth"] <= 0 or layout["overlapHeight"] <= 0, {
+        "viewport": viewport,
+        "layout": layout,
+    }
+    assert all(item["scrollWidth"] <= item["clientWidth"] + 1 for item in layout["rects"]), {
+        "viewport": viewport,
+        "layout": layout,
+    }
+
+
 def assert_no_browser_errors(driver: webdriver.Edge, viewport: str, path: str) -> None:
     errors = [entry for entry in driver.get_log("browser") if entry.get("level") == "SEVERE"]
     assert not errors, {"viewport": viewport, "path": path, "errors": errors}
@@ -240,6 +291,7 @@ def main() -> None:
         driver.find_element(By.CSS_SELECTOR, ".identity-submit").click()
         wait.until(lambda current: current.current_url.rstrip("/") == BASE_URL)
         assert driver.find_element(By.CSS_SELECTOR, ".assistant-orb").is_displayed()
+        wait_for_assistant_open(driver, wait)
         wait.until(
             lambda current: "当前账号还没有做题记录"
             not in current.find_element(By.TAG_NAME, "body").text
@@ -250,7 +302,11 @@ def main() -> None:
             wait_for_vue(driver, wait)
             assert_healthy(driver, heading)
             assert driver.find_element(By.CSS_SELECTOR, ".assistant-orb").is_displayed()
+            wait_for_assistant_open(driver, wait)
+            close_assistant(driver, wait)
             assert_assistant_clear(driver, "desktop", path)
+            if name == "roadmap":
+                assert_roadmap_actions(driver, "desktop")
             driver.save_screenshot(str(OUTPUT_DIR / f"desktop-{name}.png"))
             if name == "dashboard":
                 assert_dashboard_containment(driver, "desktop")
@@ -292,7 +348,11 @@ def main() -> None:
             wait_for_vue(driver, wait)
             assert_healthy(driver, heading)
             assert driver.find_element(By.CSS_SELECTOR, ".assistant-orb").is_displayed()
+            wait_for_assistant_open(driver, wait)
+            close_assistant(driver, wait)
             assert_assistant_clear(driver, "mobile", path)
+            if name == "roadmap":
+                assert_roadmap_actions(driver, "mobile")
             if name == "dashboard":
                 assignment_tab = driver.find_element(By.CSS_SELECTOR, ".student-side-nav a[href='/assignments']")
                 assert assignment_tab.is_displayed(), "移动端 TabBar 必须包含我的作业"

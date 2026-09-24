@@ -24,9 +24,20 @@ def upgrade() -> None:
         if table.name not in {
             "advice_drafts",
             "conversations",
+            "course_relations",
+            "comment_upvotes",
             "llm_call_log",
             "messages",
+            "ai_pregrades",
+            "question_comments",
+            "student_help_signals",
+            "teacher_ai_preferences",
+            "teacher_experiences",
+            "teaching_artifacts",
+            "teaching_risks",
             "teacher_student_messages",
+            "user_ai_profiles",
+            "user_courses",
             "user_preferences",
         }
     ]
@@ -40,9 +51,20 @@ def downgrade() -> None:
         if table.name not in {
             "advice_drafts",
             "conversations",
+            "course_relations",
+            "comment_upvotes",
             "llm_call_log",
             "messages",
+            "ai_pregrades",
+            "question_comments",
+            "student_help_signals",
+            "teacher_ai_preferences",
+            "teacher_experiences",
+            "teaching_artifacts",
+            "teaching_risks",
             "teacher_student_messages",
+            "user_ai_profiles",
+            "user_courses",
             "user_preferences",
         }
     ]

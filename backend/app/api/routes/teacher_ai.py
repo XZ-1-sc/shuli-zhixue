@@ -9,11 +9,10 @@ from ...services.teacher_ai_service import (
     generate_class_insight_sync,
     generate_grade_comments_sync,
     generate_grade_comment_sync,
+    generate_teacher_questions_sync,
 )
 from ...services.assignment_report_service import generate_assignment_report_sync
-from ...services.teacher_question_generator import generate_teacher_questions_sync
-from ..teacher_schemas import TeacherQuestionAIRequest
-from ..teacher_schemas import AssignmentReportAIRequest, AssignmentSuggestionAIRequest, ClassInsightAIRequest, GradeCommentAIRequest
+from ..teacher_schemas import AssignmentReportAIRequest, AssignmentSuggestionAIRequest, ClassInsightAIRequest, GradeCommentAIRequest, TeacherQuestionAIRequest
 
 
 router = APIRouter(prefix="/api/teacher/ai", tags=["teacher-ai"])

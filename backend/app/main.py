@@ -5,13 +5,16 @@ from fastapi.responses import HTMLResponse
 from .api.routes.auth import router as auth_router
 from .api.routes.assessment import router as assessment_router
 from .api.routes.assignments import router as assignments_router
+from .api.routes.analytics import router as analytics_router
 from .api.routes.chat import router as chat_router
+from .api.routes.comments import router as comments_router
 from .api.routes.diagnosis import router as diagnosis_router
 from .api.routes.health import router as health_router
 from .api.routes.messages import router as messages_router
 from .api.routes.practice import router as practice_router
 from .api.routes.profile import router as profile_router
 from .api.routes.stages import router as stages_router
+from .api.routes.solutions import router as solutions_router
 from .api.routes.teacher import router as teacher_router
 from .api.routes.teacher_advice import router as teacher_advice_router
 from .api.routes.teacher_analytics import router as teacher_analytics_router
@@ -20,6 +23,7 @@ from .api.routes.teacher_ai import router as teacher_ai_router
 from .api.routes.teacher_questions import router as teacher_questions_router
 from .api.routes.teacher_review import router as teacher_review_router
 from .api.routes.teacher_students import router as teacher_students_router
+from .api.routes.teaching_intelligence import router as teaching_intelligence_router
 from .api.routes.uploads import router as uploads_router
 
 
@@ -48,19 +52,23 @@ app.add_middleware(
 )
 
 app.include_router(auth_router)
+app.include_router(analytics_router)
 app.include_router(health_router)
 app.include_router(messages_router)
 app.include_router(stages_router)
+app.include_router(solutions_router)
 app.include_router(practice_router)
 app.include_router(assessment_router)
 app.include_router(diagnosis_router)
 app.include_router(profile_router)
 app.include_router(chat_router)
+app.include_router(comments_router)
 app.include_router(uploads_router)
 app.include_router(teacher_router)
 app.include_router(teacher_advice_router)
 app.include_router(teacher_analytics_router)
 app.include_router(teacher_students_router)
+app.include_router(teaching_intelligence_router)
 app.include_router(teacher_questions_router)
 app.include_router(teacher_assignments_router)
 app.include_router(teacher_ai_router)
@@ -79,13 +87,16 @@ async def offline_docs() -> HTMLResponse:
         ("GET", "/api/health", "健康检查"),
         ("POST", "/api/register", "注册用户，密码哈希入库"),
         ("POST", "/api/login", "登录用户"),
-        ("GET", "/api/stages", "学习阶段与课程"),
-        ("GET", "/api/courses?stage=大一", "按阶段查询课程"),
-        ("GET", "/api/knowledge-graph", "数学知识图谱"),
+        ("GET", "/api/courses", "完整课程目录"),
+        ("GET", "/api/user-courses", "当前学生的课程选择"),
+        ("PUT", "/api/user-courses", "更新课程选择与主课程"),
+        ("GET", "/api/knowledge-graph-v2", "课程与知识点关系图谱"),
         ("GET", "/api/question-types", "题型与知识点统计"),
         ("GET", "/api/practice/random", "随机抽题"),
         ("POST", "/api/practice/submit", "提交答案并返回解析"),
-        ("POST", "/api/practice/ai-similar", "生成 1-2 道临时 AI 同类变式题"),
+        ("POST", "/api/practice/ai-similar", "生成 1-3 道临时 AI 同类变式题"),
+        ("GET", "/api/questions/{question_id}/comments", "作答后查看题目讨论"),
+        ("POST", "/api/questions/{question_id}/comments", "作答后发布题目讨论"),
         ("POST", "/api/uploads/answer-images", "上传作答图片"),
         ("POST", "/api/uploads/note-files", "上传笔记图片或文件"),
         ("POST", "/api/assessment/start", "开始或继续基础首测"),
@@ -117,6 +128,7 @@ async def offline_docs() -> HTMLResponse:
         ("POST", "/api/teacher/ai/grade-comment", "教师批改评语草稿"),
         ("POST", "/api/teacher/ai/class-insight", "教师班级或学生学情解读"),
         ("POST", "/api/teacher/ai/assignment-suggestion", "教师组卷建议草稿"),
+        ("POST", "/api/teacher/ai/generate-question", "教师生成待审核题目草稿"),
         ("GET", "/api/teacher/review/flag", "教师待批改异常复核标记"),
         ("GET", "/api/teacher/tickets", "教师学生求助工单"),
         ("JSON", "/openapi.json", "OpenAPI JSON"),
@@ -194,7 +206,7 @@ async def offline_docs() -> HTMLResponse:
           <main>
             <section class="hero">
               <h1>数理智学 API 文档</h1>
-              <p>当前后端已切换到 math_brain 数据库，用于本科大学数学阶段诊断、刷题、规划、知识图谱和错题复盘。</p>
+              <p>当前后端使用 math_brain 数据库，支持多课程诊断、刷题、规划、关系图谱、题目讨论和错题复盘。</p>
             </section>
             <section class="grid">{endpoint_html}</section>
           </main>

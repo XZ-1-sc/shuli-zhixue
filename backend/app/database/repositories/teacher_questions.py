@@ -7,7 +7,7 @@ from sqlalchemy import text
 
 from ..session import SessionLocal
 from ...api.teacher_schemas import TYPE_LABELS, QuestionImportCommitRequest, QuestionWriteRequest
-from ...api.utils import _parse_json_list
+from ...api.utils import _parse_json_list, _parse_solution_steps
 from ...api.routes.teacher import _audit
 from .teacher_common import _iso, _json
 
@@ -47,11 +47,10 @@ def _question_dict(row: Any) -> dict[str, Any]:
     item["key_steps"] = _parse_json_list(item.get("key_steps"))
     item["common_errors"] = _parse_json_list(item.get("common_errors"))
     item["mistake_tags"] = _parse_json_list(item.get("mistake_tags"))
+    item["solution_steps"] = _parse_solution_steps(item.get("solution_steps"))
     for key in ("created_at", "updated_at", "published_at"):
         item[key] = _iso(item.get(key))
     item["editable"] = bool(item.get("created_by"))
-    # AI provenance uses existing columns, so this works without later migrations.
-    item["ai_generated"] = bool(item.get("ai_generated")) or str(item.get("source_path") or "").startswith("teacher-ai/")
     item.setdefault("attachments", [])
     item.setdefault("analysis_attachments", [])
     return item
@@ -59,11 +58,13 @@ def _question_dict(row: Any) -> dict[str, Any]:
 def _question_columns() -> str:
     return """
       q.id, q.source_id, q.created_by, q.visibility, q.publish_status, q.version,
+      q.ai_generated, q.source_question_id,
       q.published_at, q.source_question_no, q.source_path, q.question_type,
       q.stage, q.course, q.knowledge_node_id, q.knowledge_tag, q.fine_tag,
       q.difficulty, q.question_text, q.option_a, q.option_b, q.option_c, q.option_d,
       q.correct_answer, q.standard_answer, q.analysis_text, q.key_steps,
-      q.common_errors, q.mistake_tags, q.created_at, q.updated_at,
+      q.common_errors, q.mistake_tags, q.solution_steps, q.steps_source,
+      q.steps_review_status, q.created_at, q.updated_at,
       (SELECT COUNT(*) FROM question_attachments qa WHERE qa.question_id=q.id AND qa.attachment_type='question') AS attachment_count,
       (SELECT COUNT(*) FROM question_attachments qa WHERE qa.question_id=q.id AND qa.attachment_type='analysis') AS analysis_attachment_count,
       s.source_name
@@ -130,6 +131,7 @@ def _questions_sync(
                        SUM(q.created_by = :teacher_id) AS mine,
                        SUM(q.created_by = :teacher_id AND q.publish_status = 'draft') AS drafts,
                        SUM(q.created_by = :teacher_id AND q.publish_status = 'published') AS published
+                       ,SUM(q.created_by = :teacher_id AND q.ai_generated = 1 AND q.publish_status = 'draft') AS ai_drafts
                 FROM questions AS q
                 JOIN source_attributions AS s ON s.id=q.source_id
                 WHERE q.deleted_at IS NULL
@@ -144,7 +146,7 @@ def _questions_sync(
         "total": total,
         "page": page,
         "page_size": page_size,
-        "summary": {key: int(summary[key] or 0) for key in ("total", "mine", "drafts", "published")},
+        "summary": {key: int(summary[key] or 0) for key in ("total", "mine", "drafts", "published", "ai_drafts")},
     }
 
 
@@ -288,18 +290,20 @@ def _create_question_sync(
             "source_question_no": source_no,
             "source_path": f"{'teacher-ai' if ai_source is not None else 'teacher'}/{teacher_id}/{source_no}",
             "knowledge_node_id": knowledge_node_id,
+            "ai_generated": 1 if ai_source is not None else 0,
+            "source_question_id": (ai_source or {}).get("source_question_id"),
         }
         result = db.execute(
             text(
                 """
                 INSERT INTO questions (
-                  source_id, created_by, visibility, publish_status, published_at,
+                  source_id, created_by, visibility, publish_status, published_at, ai_generated, source_question_id,
                   source_question_no, source_path, question_type, stage, course,
                   knowledge_node_id, knowledge_tag, fine_tag, difficulty, question_text,
                   option_a, option_b, option_c, option_d, correct_answer, standard_answer,
                   analysis_text, key_steps, common_errors, mistake_tags
                 ) VALUES (
-                  :source_id, :created_by, :visibility, :publish_status, :published_at,
+                  :source_id, :created_by, :visibility, :publish_status, :published_at, :ai_generated, :source_question_id,
                   :source_question_no, :source_path, :question_type, :stage, :course,
                   :knowledge_node_id, :knowledge_tag, :fine_tag, :difficulty, :question_text,
                   :option_a, :option_b, :option_c, :option_d, :correct_answer, :standard_answer,

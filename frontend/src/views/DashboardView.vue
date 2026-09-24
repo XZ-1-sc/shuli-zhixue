@@ -2,12 +2,9 @@
   <section class="student-page home-ref">
     <div class="dashboard-page-controls">
       <label class="stage-picker">
-        <small>当前阶段</small>
-        <select v-model="goal.target_stage" @change="syncCourseToStage">
-          <option value="大一">大一 · 上学期</option>
-          <option value="大二">大二 · 下学期</option>
-          <option value="大三">大三 · 专业课</option>
-          <option value="大四">大四 · 综合应用</option>
+        <small>当前主课程</small>
+        <select v-model="goal.target_course" @change="saveGoal">
+          <option v-for="course in stageCourses" :key="course.course_name" :value="course.course_name">{{ course.course_name }}</option>
         </select>
       </label>
     </div>
@@ -21,10 +18,10 @@
 
       <section class="home-board">
         <article class="glass-panel stage-progress-card">
-          <div class="panel-title">阶段进度 <span>ⓘ</span></div>
+          <div class="panel-title">课程进度 <span>ⓘ</span></div>
           <div class="stage-inner">
             <div class="stage-card-head">
-              <h2>{{ goal.target_stage || "大一" }} · 高等数学基础</h2>
+              <h2>{{ goal.target_course || "主课程" }} · 学习进度</h2>
               <button type="button" @click="saveGoal">保存目标</button>
             </div>
             <div class="stage-progress-body">
@@ -53,8 +50,8 @@
               </dl>
             </div>
             <div class="stage-target">
-              <span>{{ hasRecords ? "本阶段目标" : "尚未首测" }}</span>
-              <small>{{ hasRecords ? `距离阶段目标：${Math.max(0, 80 - displayProgress)}%` : "完成首测后生成个人进度" }}</small>
+              <span>{{ hasRecords ? "本课程目标" : "尚未首测" }}</span>
+              <small>{{ hasRecords ? `距离课程目标：${Math.max(0, 80 - displayProgress)}%` : "完成首测后生成个人进度" }}</small>
               <p>{{ hasRecords ? "完成 80% 知识点学习并达到良好掌握" : "当前账号还没有做题记录，系统不会展示模拟进度。" }}</p>
               <div class="target-bar"><i :style="{ width: `${displayProgress}%` }"></i></div>
               <b>{{ displayProgress }}%</b>
@@ -77,7 +74,7 @@
             <div><small>今日 AI 建议</small><strong>{{ todayAdvice.title }}</strong><p>{{ todayAdvice.text }}</p></div>
             <button type="button" @click="askXiaoluo">问小逻</button>
           </section>
-          <ol v-if="!hasRecords" class="student-onboarding-steps" aria-label="建立个性化学习计划的三个步骤"><li><b>1</b><span>选择当前阶段</span></li><li><b>2</b><span>完成基础首测</span></li><li><b>3</b><span>查看个人计划</span></li></ol>
+          <ol v-if="!hasRecords" class="student-onboarding-steps" aria-label="建立个性化学习计划的三个步骤"><li><b>1</b><span>选择学习课程</span></li><li><b>2</b><span>完成基础首测</span></li><li><b>3</b><span>查看个人计划</span></li></ol>
           <div class="daily-list">
             <template v-if="displayTasks.length">
               <button
@@ -118,7 +115,7 @@
               <div v-for="weak in weakCourses" :key="`${weak.course}-${weak.fine_tag}`">
                 <span>⚠ {{ weak.fine_tag || weak.knowledge_tag }}</span>
                 <small>掌握度 {{ weak.score }}%</small>
-                <RouterLink :to="`/practice?stage=${weak.stage}&course=${weak.course}&knowledge_tag=${weak.knowledge_tag}&limit=10`">去提升</RouterLink>
+                <RouterLink :to="`/practice?course=${weak.course}&knowledge_tag=${weak.knowledge_tag}&limit=10`">去提升</RouterLink>
                 <i><b :style="{ width: `${weak.score}%` }"></b></i>
               </div>
               <div v-if="!weakCourses.length" class="weak-empty-row">
@@ -142,7 +139,7 @@ import { RouterLink, useRouter } from "vue-router";
 
 import RadarChart from "../components/RadarChart.vue";
 import HeatmapCalendar from "../components/ui/HeatmapCalendar.vue";
-import { apiGet, apiPost } from "../api/client";
+import { apiGet, apiPost, apiPut } from "../api/client";
 import { useUserStore } from "../stores/user";
 
 const emit = defineEmits(["open-auth"]);
@@ -154,7 +151,6 @@ const diagnosis = ref({});
 const profile = ref({});
 const insights = ref({ calendar: [], mastery_trend: [] });
 const goal = reactive({
-  target_stage: "大一",
   target_course: "高等数学上",
   weekly_hours: 8,
   exam_date: ""
@@ -170,8 +166,7 @@ const fallbackTasks = [
 ];
 
 const stageCourses = computed(() => {
-  const stage = stages.value.find((item) => item.stage_name === goal.target_stage);
-  return stage?.courses || [];
+  return stages.value.flatMap((item) => item.courses || []);
 });
 
 const displayProgress = computed(() => {
@@ -248,12 +243,12 @@ async function saveGoal() {
     return;
   }
   const data = await apiPost("/api/user-goals", {
-    target_stage: goal.target_stage,
     target_course: goal.target_course,
     weekly_hours: goal.weekly_hours,
     exam_date: goal.exam_date || null
   });
   Object.assign(goal, data);
+  await apiPut("/api/user-courses", { courses: [goal.target_course], primary_course: goal.target_course });
 }
 
 function startTask(task) {
@@ -261,7 +256,6 @@ function startTask(task) {
     path: "/practice",
     query: {
       mode: "daily",
-      stage: task.stage || goal.target_stage,
       course: task.course || goal.target_course,
       knowledge_tag: task.knowledge_tag,
       limit: task.question_count || 8
@@ -271,15 +265,14 @@ function startTask(task) {
 function askXiaoluo() { window.dispatchEvent(new CustomEvent("xiaoluo:open", { detail: { prompt: "请结合我的今日推荐、薄弱点和学习目标，告诉我今天怎么安排最有效。", context: { type: "plan" }, autoSend: true } })); }
 
 async function load() {
-  const stageData = await apiGet("/api/stages").catch(() => ({ stages: [] }));
-  stages.value = stageData.stages || [];
+  const courseData = await apiGet("/api/courses").catch(() => ({ courses: [] }));
+  stages.value = [{ courses: courseData.courses || [] }];
   if (!user.userId) {
     diagnosis.value = { recent_record_count: 0, radar: [], weak_points: [], course_scores: [] };
     tasks.value = [];
     profile.value = {};
     insights.value = { calendar: [], mastery_trend: [] };
     Object.assign(goal, {
-      target_stage: "大一",
       target_course: "高等数学上",
       weekly_hours: 8,
       exam_date: ""
@@ -302,7 +295,6 @@ async function load() {
     requests.insights
   ]);
   Object.assign(goal, {
-    target_stage: goalData.target_stage || "大一",
     target_course: goalData.target_course || "高等数学上",
     weekly_hours: goalData.weekly_hours || 8,
     exam_date: goalData.exam_date || ""

@@ -8,6 +8,9 @@ from ..api.schemas import ChatContext
 from ..api.utils import _json_safe, _parse_json_list
 from ..database.repositories.diagnosis import _diagnose_sync, _study_roadmap_sync
 from ..database.session import SessionLocal
+from .ai_profile_service import get_ai_profile_sync
+from .solution_service import ensure_solution_steps_sync
+from .teacher_experience_service import teacher_memory_context_sync
 
 
 def _student_behavior_backtrace(user_id: int) -> dict[str, Any]:
@@ -114,10 +117,10 @@ def _student_record_context(user_id: int, context: ChatContext) -> dict[str, Any
         row = db.execute(
             text(
                 f"""
-                SELECT pr.id AS record_id, pr.question_id, pr.selected_answer, pr.answer_text,
-                       pr.score, pr.is_correct, pr.review_status, pr.mistake_tags, pr.answered_at,
+                SELECT pr.id AS record_id, pr.question_id, pr.selected_answer, pr.answer_text, pr.answer_steps,
+                       pr.score, pr.is_correct, pr.review_status, pr.mistake_tags, pr.step_feedback, pr.answered_at,
                        q.question_text, q.question_type, q.stage, q.course, q.knowledge_tag,
-                       q.fine_tag, q.standard_answer, q.analysis_text, q.key_steps, q.common_errors
+                       q.fine_tag, q.standard_answer, q.analysis_text, q.key_steps, q.common_errors,q.solution_steps
                 FROM practice_records AS pr
                 JOIN questions AS q ON q.id = pr.question_id
                 WHERE {' AND '.join(clauses)}
@@ -152,6 +155,12 @@ def _student_record_context(user_id: int, context: ChatContext) -> dict[str, Any
                 }
                 for item in related_rows
             ]
+    solution = ensure_solution_steps_sync(int(row["question_id"]), user_id)
+    selected_step = None
+    if context.type == "solution_step" and context.step_no:
+        selected_step = next((item for item in solution.get("steps") or [] if int(item.get("step_no") or 0) == context.step_no), None)
+        if selected_step is None:
+            raise HTTPException(status_code=422, detail="指定的解析步骤不存在。")
     return {
         "type": context.type,
         "record_id": int(row["record_id"]),
@@ -163,6 +172,7 @@ def _student_record_context(user_id: int, context: ChatContext) -> dict[str, Any
         "knowledge_tag": str(row["knowledge_tag"]),
         "fine_tag": str(row["fine_tag"]),
         "student_answer": row["selected_answer"] or row["answer_text"] or "仅提交图片作答",
+        "answer_steps": _parse_json_list(row["answer_steps"]),
         "score": float(row["score"]) if row["score"] is not None else None,
         "is_correct": bool(row["is_correct"]) if row["is_correct"] is not None else None,
         "review_status": str(row["review_status"]),
@@ -171,6 +181,9 @@ def _student_record_context(user_id: int, context: ChatContext) -> dict[str, Any
         "analysis_text": str(row["analysis_text"] or ""),
         "key_steps": _parse_json_list(row["key_steps"]),
         "common_errors": _parse_json_list(row["common_errors"]),
+        "solution_steps": solution.get("steps") or [],
+        "step_feedback": row["step_feedback"],
+        "focus_step": selected_step,
         "answered_at": _json_safe(row["answered_at"]),
         "recent_similar_wrong": related,
     }
@@ -307,8 +320,10 @@ def _teacher_context(teacher_id: int, context: ChatContext | None) -> dict[str, 
 
 def build_chat_context_sync(user_id: int, role: str, context: ChatContext | None) -> dict[str, Any]:
     if role in {"teacher", "admin"}:
-        return _teacher_context(user_id, context)
-    if context and context.type in {"question", "wrong"}:
+        result = _teacher_context(user_id, context)
+        result["teacher_memory"] = teacher_memory_context_sync(user_id)
+        return result
+    if context and context.type in {"question", "wrong", "solution_step"}:
         result = _student_record_context(user_id, context)
     elif context and context.type == "assignment":
         result = _student_assignment_context(user_id, context)
@@ -317,6 +332,7 @@ def build_chat_context_sync(user_id: int, role: str, context: ChatContext | None
     else:
         result = {"type": "diagnosis", **_diagnose_sync(user_id)}
     result["behavior_backtrace"] = _student_behavior_backtrace(user_id)
+    result["ai_profile"] = get_ai_profile_sync(user_id)
     return result
 
 

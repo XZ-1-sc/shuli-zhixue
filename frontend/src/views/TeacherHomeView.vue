@@ -67,6 +67,8 @@
           </section>
           <p v-if="ticketError" class="teacher-form-message is-error">{{ ticketError }}</p>
 
+          <TeacherIntelligenceDesk v-if="summary.class_count" :classes="overview.classes" />
+
           <section v-if="!summary.class_count" class="teacher-empty-onboarding">
             <div class="empty-compass">Σ</div>
             <small>从这里开始</small>
@@ -141,7 +143,7 @@
               <header><div><strong>我的班级</strong><small>点击进入成员管理</small></div><RouterLink to="/teacher/classes">全部班级</RouterLink></header>
               <div>
                 <RouterLink v-for="item in overview.classes" :key="item.id" :to="`/teacher/classes?class_id=${item.id}`">
-                  <small>{{ item.stage }} · {{ item.course }}</small>
+                  <small>{{ item.course }}</small>
                   <strong>{{ item.name }}</strong>
                   <span>{{ item.student_count }} 名学生 · 今日 {{ item.active_today }} 人活跃</span>
                   <b>进入班级 →</b>
@@ -160,6 +162,7 @@ import { RouterLink } from "vue-router";
 
 import { apiGet, apiPost } from "../api/client";
 import PageHeader from "../components/ui/PageHeader.vue";
+import TeacherIntelligenceDesk from "../components/teacher/TeacherIntelligenceDesk.vue";
 
 const loading = ref(true);
 const error = ref("");

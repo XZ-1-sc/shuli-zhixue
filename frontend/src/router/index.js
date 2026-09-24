@@ -79,6 +79,9 @@ const router = createRouter({
   routes
 });
 
+const CHUNK_RELOAD_KEY = "math_brain_chunk_reload";
+const CHUNK_LOAD_ERROR = /Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module|ChunkLoadError|Loading chunk .* failed/i;
+
 function storedUser() {
   const raw = localStorage.getItem("math_brain_current_user") || sessionStorage.getItem("math_brain_current_user");
   if (!raw) {
@@ -115,7 +118,24 @@ router.beforeEach((to) => {
 });
 
 router.afterEach((to) => {
+  sessionStorage.removeItem(CHUNK_RELOAD_KEY);
   document.title = `${to.meta.title || "学习"} - 数理智学`;
+});
+
+router.onError((error, to) => {
+  const message = String(error?.message || error || "");
+  if (!CHUNK_LOAD_ERROR.test(message)) {
+    return;
+  }
+
+  const target = to?.fullPath || `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (sessionStorage.getItem(CHUNK_RELOAD_KEY) === target) {
+    sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+    return;
+  }
+
+  sessionStorage.setItem(CHUNK_RELOAD_KEY, target);
+  window.location.replace(target);
 });
 
 export default router;

@@ -7,10 +7,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from ..api.routes.teacher import _owned_class
-from ..api.teacher_schemas import AssignmentSuggestionAIRequest, ClassInsightAIRequest, GradeCommentAIRequest
+from ..api.teacher_schemas import AssignmentSuggestionAIRequest, ClassInsightAIRequest, GradeCommentAIRequest, QuestionWriteRequest, TeacherQuestionAIRequest
 from ..api.utils import _parse_json_list
 from ..database.repositories.teacher_common import _managed_student
 from ..database.repositories.teacher_students import _student_detail_sync
+from ..database.repositories.teacher_questions import _create_question_sync
 from ..database.session import SessionLocal
 from ..utils.llm_client import call_llm_json
 
@@ -38,6 +39,96 @@ class KnowledgeSuggestion(BaseModel):
 class AssignmentSuggestion(BaseModel):
     knowledge_tags: list[KnowledgeSuggestion] = Field(min_length=1, max_length=8)
     rationale: str = Field(min_length=1, max_length=1200)
+
+
+class GeneratedTeacherQuestion(BaseModel):
+    question_text: str = Field(min_length=2, max_length=12000)
+    options: dict[str, str] = Field(default_factory=dict)
+    correct_answer: str | None = Field(default=None, max_length=16)
+    standard_answer: str = Field(min_length=1, max_length=12000)
+    analysis_text: str = Field(min_length=1, max_length=20000)
+    key_steps: list[str] = Field(default_factory=list, max_length=20)
+    common_errors: list[str] = Field(default_factory=list, max_length=20)
+
+
+class GeneratedTeacherQuestionSet(BaseModel):
+    questions: list[GeneratedTeacherQuestion] = Field(min_length=1, max_length=5)
+
+
+def generate_teacher_questions_sync(teacher_id: int, payload: TeacherQuestionAIRequest) -> dict[str, Any]:
+    with SessionLocal() as db:
+        stage = db.execute(text("""
+            SELECT s.stage_name FROM math_courses c JOIN math_stages s ON s.id=c.stage_id
+            WHERE c.course_name=:course ORDER BY s.stage_order LIMIT 1
+        """), {"course": payload.course}).scalar()
+        exemplar = db.execute(text("""
+            SELECT id,question_text,option_a,option_b,option_c,option_d,correct_answer,standard_answer,analysis_text
+            FROM questions WHERE deleted_at IS NULL AND course=:course
+              AND (created_by IS NULL OR (publish_status='published' AND visibility='public'))
+            ORDER BY (knowledge_tag=:tag OR fine_tag=:tag) DESC,RAND() LIMIT 1
+        """), {"course": payload.course, "tag": payload.knowledge_tag}).mappings().first()
+    if not stage:
+        raise HTTPException(status_code=422, detail="课程不存在，请从课程列表中选择。")
+    fallback_item = GeneratedTeacherQuestion(
+        question_text=f"变式审阅稿：{exemplar['question_text']}" if exemplar else f"请围绕“{payload.knowledge_tag}”设计一道{payload.question_type}并完整作答。",
+        options={key: str(exemplar[f"option_{key.lower()}"]) for key in "ABCD" if exemplar and exemplar[f"option_{key.lower()}"]} if payload.question_type == "choice" else {},
+        correct_answer=str(exemplar["correct_answer"] or "A") if exemplar and payload.question_type == "choice" else None,
+        standard_answer=str(exemplar["standard_answer"] or "请教师补充标准答案。") if exemplar else "请教师根据课程要求补充标准答案。",
+        analysis_text=str(exemplar["analysis_text"] or "先明确条件与所用定理，再逐步推导并验算。") if exemplar else "先明确条件与所用定理，再逐步推导并验算。",
+        key_steps=["识别核心知识点", "逐步推导", "检查结论"],
+        common_errors=["忽略适用条件", "关键步骤跳跃"],
+    )
+    fallback = GeneratedTeacherQuestionSet(questions=[fallback_item.model_copy(deep=True) for _ in range(payload.count)])
+    generated, usage = call_llm_json(
+        [
+            {"role": "system", "content": f"你是大学数学教师出题助手。生成 {payload.count} 道{payload.question_type}；必须可独立作答、答案与解析一致。选择题必须有 A-D 四项且唯一正确。结果只是待教师审核的私有草稿。"},
+            {"role": "user", "content": json.dumps({"request": payload.model_dump(), "quality_reference": dict(exemplar) if exemplar else None}, ensure_ascii=False, default=str)[:22000]},
+        ],
+        GeneratedTeacherQuestionSet,
+        fallback=fallback,
+        agent_name="teacher_question_generator",
+        temperature=0.35,
+        max_tokens=5000,
+    )
+    created = []
+    errors = []
+    seen: set[str] = set()
+    for index, item in enumerate(generated.questions[:payload.count], start=1):
+        fingerprint = "".join(item.question_text.split()).lower()
+        if fingerprint in seen:
+            errors.append({"index": index, "reason": "题干重复，未保存"})
+            continue
+        seen.add(fingerprint)
+        options = item.options
+        if payload.question_type == "choice" and (set(options) != {"A", "B", "C", "D"} or str(item.correct_answer or "").upper() not in {"A", "B", "C", "D"}):
+            errors.append({"index": index, "reason": "选择题选项或答案未通过规则校验，未保存"})
+            continue
+        request = QuestionWriteRequest(
+            question_type=payload.question_type, stage=str(stage), course=payload.course,
+            knowledge_tag=payload.knowledge_tag, fine_tag=payload.knowledge_tag, difficulty=payload.difficulty,
+            question_text=item.question_text, option_a=options.get("A"), option_b=options.get("B"),
+            option_c=options.get("C"), option_d=options.get("D"), correct_answer=item.correct_answer,
+            standard_answer=item.standard_answer, analysis_text=item.analysis_text,
+            key_steps=item.key_steps, common_errors=item.common_errors,
+            mistake_tags=[payload.knowledge_tag], visibility="class", publish_status="draft",
+        )
+        saved = _create_question_sync(teacher_id, request)
+        with SessionLocal.begin() as db:
+            db.execute(text("UPDATE questions SET ai_generated=1,source_question_id=:source_id WHERE id=:id AND created_by=:teacher_id"),
+                       {"source_id": int(exemplar["id"]) if exemplar else None, "id": saved["id"], "teacher_id": teacher_id})
+        saved["ai_generated"] = True
+        saved["source_question_id"] = int(exemplar["id"]) if exemplar else None
+        created.append(saved)
+    if not created:
+        return {
+            "items": [],
+            "created_count": 0,
+            "errors": errors or [{"index": 1, "reason": "模型未返回可用题目"}],
+            "notice": "本次未生成可用题目：常见原因是选择题选项不全或答案不在 A–D、题干重复。可减少数量、更换知识点或补充要求后重试。",
+            "usage": usage.model_dump(),
+        }
+    return {"items": created, "created_count": len(created), "errors": errors,
+            "notice": "AI 生成内容已保存为私有草稿，请教师逐题审核后发布。", "usage": usage.model_dump()}
 
 
 def teaching_insight_to_card(insight: TeachingInsight, scope: str) -> dict[str, Any]:

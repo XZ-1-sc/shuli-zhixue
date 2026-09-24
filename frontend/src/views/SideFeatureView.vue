@@ -81,7 +81,7 @@
         <article class="glass-panel profile-card">
           <small>当前账户</small>
           <h2>{{ profile.user?.nickname || user.username }}</h2>
-          <p>{{ profile.goal?.target_stage }} · {{ profile.goal?.target_course }}</p>
+          <p>{{ profile.goal?.target_course || "尚未设置主课程" }}</p>
           <div class="profile-stats">
             <span><b>{{ profile.stats?.practice_count || 0 }}</b>练习题</span>
             <span><b>{{ profile.stats?.accuracy || 0 }}%</b>正确率</span>
@@ -95,7 +95,7 @@
             <RouterLink
               v-for="weak in profile.weak_points || []"
               :key="`${weak.course}-${weak.knowledge_tag}`"
-              :to="`/practice?stage=${weak.stage}&course=${weak.course}&knowledge_tag=${weak.knowledge_tag}&limit=10`"
+              :to="`/practice?course=${weak.course}&knowledge_tag=${weak.knowledge_tag}&limit=10`"
             >
               <span>{{ weak.fine_tag || weak.knowledge_tag }}</span>
               <b>{{ weak.score }}%</b>
@@ -114,6 +114,7 @@
             </div>
           </div>
         </article>
+        <PersonalAnalytics />
         <article class="glass-panel profile-card profile-wide">
           <small>最近记录</small>
           <div class="record-table">
@@ -140,13 +141,6 @@
       <section v-else-if="mode === 'resources'" class="resources-layout">
         <form class="glass-panel resource-filter" @submit.prevent="loadResources">
           <label>
-            阶段
-            <select v-model="resourceFilter.stage">
-              <option value="">全部阶段</option>
-              <option v-for="stage in stageOptions" :key="stage" :value="stage">{{ stage }}</option>
-            </select>
-          </label>
-          <label>
             课程
             <input v-model="resourceFilter.course" placeholder="例如：高等数学上" />
           </label>
@@ -154,7 +148,7 @@
         </form>
         <div class="feature-grid">
           <article v-for="item in resources" :key="item.id" class="glass-panel resource-card">
-            <small>{{ item.stage }} · {{ item.course }} · {{ resourceTypeLabel(item.resource_type) }}</small>
+            <small>{{ item.course }} · {{ resourceTypeLabel(item.resource_type) }}</small>
             <h2>{{ item.title }}</h2>
             <p>{{ item.description }}</p>
             <RouterLink :to="item.url || '/practice'">进入学习</RouterLink>
@@ -242,15 +236,10 @@
       <section v-else-if="mode === 'settings'" class="settings-layout">
         <form class="glass-panel settings-form" @submit.prevent="saveSettings">
           <label>
-            目标阶段
-            <select v-model="settings.target_stage">
-              <option v-for="stage in stageOptions" :key="stage" :value="stage">{{ stage }}</option>
-            </select>
+            主课程
+            <select v-model="settings.target_course" required><option v-for="course in selectedCourses" :key="course" :value="course">{{ course }}</option></select>
           </label>
-          <label>
-            目标课程
-            <input v-model="settings.target_course" required />
-          </label>
+          <fieldset class="settings-course-picker"><legend>学习课程（可多选）</legend><label v-for="course in courseCatalog" :key="course.course_name"><input v-model="selectedCourses" type="checkbox" :value="course.course_name" />{{ course.course_name }}</label></fieldset>
           <label>
             每周学习时长
             <input v-model.number="settings.weekly_hours" min="0.5" max="80" step="0.5" type="number" required />
@@ -264,7 +253,7 @@
             <input v-model="settings.notify_xiaoluo" type="checkbox" role="switch" />
           </label>
           <button type="submit">保存设置</button>
-          <p v-if="settingsSaved">已保存，回到首页后阶段信息会同步更新。</p>
+          <p v-if="settingsSaved">已保存，课程看板与知识图谱会同步更新。</p>
         </form>
       </section>
   </section>
@@ -278,6 +267,7 @@ import { apiDelete, apiGet, apiPost, apiPut, apiUpload } from "../api/client";
 import ContactPicker from "../components/messages/ContactPicker.vue";
 import MessageBubble from "../components/messages/MessageBubble.vue";
 import MessageComposer from "../components/messages/MessageComposer.vue";
+import PersonalAnalytics from "../components/student/PersonalAnalytics.vue";
 import { useUserStore } from "../stores/user";
 
 const RadarChart = defineAsyncComponent(() => import("../components/RadarChart.vue"));
@@ -296,7 +286,7 @@ const pages = {
   profile: {
     kicker: "学习档案",
     title: "你的数学学习画像",
-    description: "按阶段、课程、正确率和最近记录整理学习状态。"
+    description: "按课程、正确率和最近记录整理学习状态。"
   },
   achievements: {
     kicker: "成就徽章",
@@ -306,7 +296,7 @@ const pages = {
   resources: {
     kicker: "资源中心",
     title: "课程讲义与练习入口",
-    description: "按阶段和课程找到讲义、专项练习、路线图和建模模板。"
+    description: "按课程找到讲义、专项练习、路线图和建模模板。"
   },
   notebook: {
     kicker: "笔记本",
@@ -316,7 +306,7 @@ const pages = {
   settings: {
     kicker: "设置中心",
     title: "调整你的学习目标",
-    description: "目标阶段、目标课程、每周时长和目标日期会影响首页显示。"
+    description: "学习课程、主课程、每周时长和目标日期会影响首页显示。"
   }
 };
 
@@ -359,10 +349,11 @@ const noteUploadError = ref("");
 const noteSaveError = ref("");
 const settingsSaved = ref(false);
 
-const stageOptions = ["大一", "大二", "大三", "大四"];
 const resourceFilter = reactive({ stage: "", course: "" });
 const noteForm = reactive({ title: "", content: "", course: "", knowledge_tag: "" });
-const settings = reactive({ target_stage: "大一", target_course: "高等数学上", weekly_hours: 8, exam_date: "", notify_xiaoluo: true });
+const settings = reactive({ target_course: "高等数学上", weekly_hours: 8, exam_date: "", notify_xiaoluo: true });
+const courseCatalog = ref([]);
+const selectedCourses = ref([]);
 const canSaveNote = computed(() => Boolean(noteForm.title.trim() && (noteForm.content.trim() || noteAttachments.value.length)));
 const activeConversations = computed(() => messageConversations.value.filter((item) => item.relation === (messageTab.value === "peers" ? "student_student" : "teacher_student")));
 const selectedConversation = computed(() => messageConversations.value.find((item) => item.id === selectedConversationId.value) || null);
@@ -615,9 +606,10 @@ async function loadNotes() {
 }
 
 async function loadSettings() {
-  const [data, preferences] = await Promise.all([apiGet("/api/user-goals"), apiGet("/api/preferences")]);
+  const [data, preferences, userCourses, catalog] = await Promise.all([apiGet("/api/user-goals"), apiGet("/api/preferences"), apiGet("/api/user-courses"), apiGet("/api/courses")]);
+  courseCatalog.value = catalog.courses || [];
+  selectedCourses.value = userCourses.courses?.length ? [...userCourses.courses] : [data.target_course || "高等数学上"];
   Object.assign(settings, {
-    target_stage: data.target_stage || "大一",
     target_course: data.target_course || "高等数学上",
     weekly_hours: Number(data.weekly_hours || 8),
     exam_date: data.exam_date || "",
@@ -776,12 +768,14 @@ async function removeNote(noteId) {
 
 async function saveSettings() {
   settingsSaved.value = false;
+  if (!selectedCourses.value.length) throw new Error("请至少选择一门学习课程。");
+  if (!selectedCourses.value.includes(settings.target_course)) settings.target_course = selectedCourses.value[0];
   await apiPost("/api/user-goals", {
-    target_stage: settings.target_stage,
     target_course: settings.target_course,
     weekly_hours: Number(settings.weekly_hours || 8),
     exam_date: settings.exam_date || null
   });
+  await apiPut("/api/user-courses", { courses: selectedCourses.value, primary_course: settings.target_course });
   await apiPut("/api/preferences", { notify_xiaoluo: settings.notify_xiaoluo });
   settingsSaved.value = true;
 }

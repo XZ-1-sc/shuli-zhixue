@@ -38,6 +38,20 @@ def wait_for_vue(driver: webdriver.Edge, wait: WebDriverWait) -> None:
     time.sleep(0.35)
 
 
+def close_auto_assistant(driver: webdriver.Edge, wait: WebDriverWait) -> None:
+    drawer = wait.until(
+        expected.visibility_of_element_located((By.CSS_SELECTOR, ".assistant-drawer.is-open"))
+    )
+    time.sleep(0.35)
+    close_button = drawer.find_element(By.CSS_SELECTOR, ".assistant-head button[aria-label='关闭小逻']")
+    driver.execute_script("arguments[0].click();", close_button)
+    wait.until(
+        lambda current: "is-open"
+        not in current.find_element(By.CSS_SELECTOR, ".assistant-drawer").get_attribute("class")
+    )
+    time.sleep(0.35)
+
+
 def click_nav(driver: webdriver.Edge, wait: WebDriverWait, label: str, path: str) -> None:
     link = wait.until(
         expected.element_to_be_clickable(
@@ -222,16 +236,11 @@ def main() -> None:
         assert_page_healthy(driver, "教师工作台")
         assistant_orb = driver.find_element(By.CSS_SELECTOR, ".assistant-orb")
         assert assistant_orb.is_displayed(), "教师端必须显示小逻入口"
-        assistant_orb.click()
-        wait.until(expected.visibility_of_element_located((By.CSS_SELECTOR, ".assistant-drawer.is-open")))
         wait.until(
             lambda current: "AI 教学助手"
             in current.find_element(By.CSS_SELECTOR, ".assistant-drawer").text
         )
-        close_assistant = driver.find_element(By.CSS_SELECTOR, ".assistant-head button[aria-label='关闭小逻']")
-        driver.execute_script("arguments[0].click();", close_assistant)
-        wait.until(lambda current: "is-open" not in current.find_element(By.CSS_SELECTOR, ".assistant-drawer").get_attribute("class"))
-        time.sleep(0.3)
+        close_auto_assistant(driver, wait)
         screenshot(driver, "01-dashboard")
 
         expected_nav = ["工作台", "班级管理", "学生学情", "题库管理", "作业管理", "消息中心", "批改中心"]
@@ -254,11 +263,9 @@ def main() -> None:
         modal = wait.until(expected.visibility_of_element_located((By.CSS_SELECTOR, ".teacher-modal")))
         modal.find_element(By.CSS_SELECTOR, "input").send_keys(class_name)
         selects = modal.find_elements(By.CSS_SELECTOR, "select")
-        Select(selects[0]).select_by_visible_text(
-            next(option.text for option in Select(selects[0]).options if option.text.startswith("大一"))
-        )
-        wait.until(lambda _: len(Select(selects[1]).options) > 0)
-        Select(selects[1]).select_by_index(0)
+        assert len(selects) == 1, "创建班级应只要求选择课程"
+        wait.until(lambda _: len(Select(selects[0]).options) > 0)
+        Select(selects[0]).select_by_index(0)
         modal.find_element(
             By.XPATH, ".//button[@type='submit' and contains(normalize-space(),'创建班级')]"
         ).click()
@@ -346,6 +353,7 @@ def main() -> None:
 
         driver.get(f"{BASE_URL}/teacher/assignments")
         wait_for_vue(driver, wait)
+        close_auto_assistant(driver, wait)
         assert_page_healthy(driver, "作业管理")
         wait.until(
             expected.element_to_be_clickable(
@@ -404,6 +412,7 @@ def main() -> None:
         for path, heading, image_name in mobile_pages:
             driver.get(f"{BASE_URL}{path}")
             wait_for_vue(driver, wait)
+            close_auto_assistant(driver, wait)
             assert_page_healthy(driver, heading)
             screenshot(driver, image_name)
 

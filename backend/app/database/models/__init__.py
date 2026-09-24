@@ -11,6 +11,8 @@ from .content import (
 )
 from .learning import ChatMessage, LearningPlan, LLMCallLog, NegotiationLog, PracticeRecord, UserGoalSetting
 from .message import Conversation, Message
+from .intelligence import AIPregrade, StudentHelpSignal, TeacherAIPreference, TeacherExperience, TeachingArtifact, TeachingRisk
+from .revamp import CommentUpvote, CourseRelation, QuestionComment, UserAIProfile, UserCourse
 from .side import LearningResource, NoteAttachment, UserNote, UserNotification, UserPreference
 from .teaching import (
     AdviceDraft,
@@ -27,6 +29,7 @@ from .user import AuditLog, AuthSession, TeacherInviteCode, TeacherProfile, User
 
 __all__ = [
     "AnswerAttachment",
+    "AIPregrade",
     "AdviceDraft",
     "AssessmentSession",
     "AssessmentSessionQuestion",
@@ -41,6 +44,8 @@ __all__ = [
     "Class",
     "ClassMember",
     "Conversation",
+    "CourseRelation",
+    "CommentUpvote",
     "KnowledgeNode",
     "LearningPlan",
     "LearningResource",
@@ -53,15 +58,23 @@ __all__ = [
     "NoteAttachment",
     "PracticeRecord",
     "Question",
+    "QuestionComment",
     "QuestionAttachment",
     "SourceAttribution",
     "TeacherInviteCode",
+    "TeacherAIPreference",
+    "TeacherExperience",
     "TeacherProfile",
     "TeacherStudentMessage",
+    "TeachingArtifact",
+    "TeachingRisk",
     "UploadedFile",
     "User",
+    "UserAIProfile",
+    "UserCourse",
     "UserGoalSetting",
     "UserNote",
     "UserNotification",
     "UserPreference",
+    "StudentHelpSignal",
 ]

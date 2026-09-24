@@ -8,6 +8,10 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+pip-build-tracker-*/
+pip-ephem-wheel-cache-*/
+pip-install-*/
+pip-unpack-*/
 
 # Node / frontend
 node_modules/

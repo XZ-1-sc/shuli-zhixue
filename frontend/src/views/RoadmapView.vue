@@ -1,17 +1,28 @@
 <template>
   <section class="student-page plan-main">
       <section class="plan-title-block">
-        <p class="math-doodle">∫  d/dx  ∑  π²/6</p>
-        <h1>完整学习规划</h1>
-        <p>基于诊断测试结果，已为你生成个性化四年学习路线图</p>
-        <div class="plan-title-actions"><button type="button">⇩ 导出学习规划</button><button type="button" @click="askXiaoluo">◉ 问小逻怎么安排</button></div>
+        <div class="plan-title-copy">
+          <p class="math-doodle">∫  d/dx  ∑  π²/6</p>
+          <h1>完整学习规划</h1>
+          <p>基于诊断结果与课程先修关系，生成可持续调整的学习路线</p>
+        </div>
+        <div class="plan-title-actions" aria-label="学习规划操作">
+          <button class="plan-action-button" type="button" title="打印或另存为 PDF" @click="exportRoadmap">
+            <span aria-hidden="true">⇩</span>
+            <span>导出学习规划</span>
+          </button>
+          <button class="plan-action-button plan-action-assistant" type="button" @click="askXiaoluo">
+            <span aria-hidden="true">◉</span>
+            <span>问小逻怎么安排</span>
+          </button>
+        </div>
       </section>
 
       <section class="plan-content-grid">
         <div class="stage-paper-board">
-          <article v-for="(stage, index) in planStages" :key="stage.stage_name" class="stage-paper" :class="`paper-${index}`">
+          <article v-for="(stage, index) in planStages" :key="stage.title" class="stage-paper" :class="`paper-${index}`">
             <header>
-              <span>{{ stage.stage_name }}</span>
+              <span>路径 {{ String(index + 1).padStart(2, '0') }}</span>
               <h2>{{ stage.title }}</h2>
               <small>{{ stage.sub }}</small>
             </header>
@@ -21,7 +32,7 @@
                 v-for="course in stage.courses"
                 :key="course.course_name"
                 :class="{ done: course.state === '已完成', doing: course.state === '进行中' }"
-                :to="`/practice?stage=${stage.stage_name}&course=${course.course_name}&limit=8`"
+                :to="`/practice?course=${course.course_name}&limit=8`"
               >
                 <span>▤</span>
                 <strong>{{ course.course_name }}</strong>
@@ -29,7 +40,7 @@
               </RouterLink>
             </div>
             <footer>
-              <strong>阶段目标</strong>
+              <strong>路径目标</strong>
               <p>{{ stage.goal_text }}</p>
             </footer>
           </article>
@@ -91,38 +102,29 @@ const roadmap = ref({});
 
 
 const planStages = computed(() => {
-  const source = roadmap.value.stages || [];
+  const allCourses = (roadmap.value.stages || []).flatMap(item => item.courses || []).map(item => typeof item === "string" ? item : item.course_name);
   const fallback = [
     {
-      stage_name: "大一",
       title: "基础建立",
       sub: "夯实基础，建立数学思维",
       goal_text: "掌握核心基础知识，建立扎实的数学脉络。",
       courses: ["高等数学（上）", "高等数学（下）", "线性代数（上）", "概率论与数理统计"]
     },
     {
-      stage_name: "大二",
       title: "核心能力",
       sub: "强化能力，形成知识体系",
       goal_text: "完善分析与代数体系，提升抽象与证明能力。",
       courses: ["线性代数（下）", "复变函数", "实变函数", "数学分析选讲"]
     },
     {
-      stage_name: "大三",
       title: "专业深化",
       sub: "拓展方向，深入专业领域",
       goal_text: "深入数学分支，培养解决复杂问题的能力。",
       courses: ["抽象代数", "拓扑学基础", "常微分方程", "泛函分析初步"]
     },
-    {
-      stage_name: "大四",
-      title: "综合应用",
-      sub: "综合应用，面向未来发展",
-      goal_text: "将数学应用于实际问题，完成综合项目。",
-      courses: ["数学建模", "数值分析", "随机过程", "毕业设计 / 论文"]
-    }
   ];
-  return (source.length ? source : fallback).slice(0, 4).map((stage, stageIndex) => ({
+  const source = allCourses.length ? fallback.map((phase, index) => ({ ...phase, courses: allCourses.slice(index * Math.ceil(allCourses.length / 3), (index + 1) * Math.ceil(allCourses.length / 3)) })) : fallback;
+  return source.slice(0, 3).map((stage, stageIndex) => ({
     ...stage,
     sub: stage.sub || fallback[stageIndex]?.sub,
     courses: (stage.courses || fallback[stageIndex]?.courses || []).slice(0, 4).map((course, index) => {
@@ -149,13 +151,14 @@ const flowCourses = ["高等数学（上）", "高等数学（下）", "线性�
 
 function askXiaoluo() { window.dispatchEvent(new CustomEvent("xiaoluo:open", { detail: { prompt: "请结合我的当前学习规划、薄弱点和可用时间，帮我调整本周安排。", context: { type: "plan" }, autoSend: true } })); }
 
+function exportRoadmap() {
+  window.dispatchEvent(new CustomEvent("xiaoluo:close"));
+  window.setTimeout(() => window.print(), 120);
+}
+
 onMounted(async () => {
   roadmap.value = await apiGet("/api/study-roadmap");
 });
 </script>
-
-<style scoped>
-.plan-title-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap}.plan-title-actions button+button{border-color:rgba(46, 125, 140, 0.4);color:#33302b;background:rgba(46, 125, 140, 0.08)}
-</style>
 
 <style scoped src="../styles/views/roadmap.css"></style>

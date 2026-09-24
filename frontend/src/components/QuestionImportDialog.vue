@@ -33,7 +33,7 @@
           </button>
 
           <div class="teacher-import-format-row">
-            <p><b>表格文件</b><span>可在每一行填写阶段、课程和知识点；缺失项使用下方默认归类。</span></p>
+            <p><b>表格文件</b><span>可在每一行填写课程和知识点；缺失项使用下方默认归类。</span></p>
             <a href="/api/teacher/question-imports/template" download>下载 Excel 模板</a>
           </div>
           <div class="teacher-import-format-row">
@@ -44,7 +44,6 @@
           <div class="teacher-import-defaults">
             <header><strong>默认归类</strong><small>文件内已有字段时，以文件内容为准</small></header>
             <div>
-              <label><span>阶段 *</span><select v-model="defaults.stage" @change="loadCourses"><option value="">请选择</option><option v-for="item in stages" :key="item.stage_name" :value="item.stage_name">{{ item.stage_name }}</option></select></label>
               <label><span>课程 *</span><select v-model="defaults.course"><option value="">请选择</option><option v-for="item in courses" :key="item.course_name" :value="item.course_name">{{ item.course_name }}</option></select></label>
               <label><span>知识点 *</span><input v-model.trim="defaults.knowledge_tag" placeholder="例如：函数极限" /></label>
               <label><span>细分标签</span><input v-model.trim="defaults.fine_tag" placeholder="例如：重要极限" /></label>
@@ -72,7 +71,7 @@
                 <b>{{ item.source_row }}</b>
               </label>
               <div>
-                <header><span>{{ item.type_label }}</span><em>{{ item.stage || '未归类' }} · {{ item.course || '未归类' }}</em><small>{{ item.points }} 分</small></header>
+                <header><span>{{ item.type_label }}</span><em>{{ item.course || '未归类' }}</em><small>{{ item.points }} 分</small></header>
                 <h3>{{ item.question_text || '未识别到题干' }}</h3>
                 <p v-if="item.question_type === 'choice'">答案 {{ item.correct_answer || '缺失' }} · {{ compactOptions(item) }}</p>
                 <p v-else>参考答案：{{ truncate(item.standard_answer, 100) || '缺失' }}</p>
@@ -112,13 +111,12 @@ const emit = defineEmits(["close", "imported"]);
 const fileInput = ref(null);
 const file = ref(null);
 const preview = ref(null);
-const stages = ref([]);
 const courses = ref([]);
 const selectedIndexes = ref([]);
 const parsing = ref(false);
 const committing = ref(false);
 const error = ref("");
-const defaults = reactive({ stage: "", course: "", knowledge_tag: "", fine_tag: "", difficulty: 3 });
+const defaults = reactive({ stage: "大一", course: "", knowledge_tag: "", fine_tag: "", difficulty: 3 });
 
 const fileBadge = computed(() => file.value?.name?.split(".").pop()?.toUpperCase() || "FILE");
 const fileSize = computed(() => file.value ? `${(file.value.size / 1024 / 1024).toFixed(2)} MB` : "");
@@ -133,7 +131,7 @@ function reset() {
   preview.value = null;
   selectedIndexes.value = [];
   error.value = "";
-  Object.assign(defaults, { stage: props.initialStage || "", course: props.initialCourse || "", knowledge_tag: "", fine_tag: "", difficulty: 3 });
+  Object.assign(defaults, { stage: props.initialStage || "大一", course: props.initialCourse || "", knowledge_tag: "", fine_tag: "", difficulty: 3 });
 }
 
 function acceptFile(candidate) {
@@ -160,16 +158,8 @@ function dropFile(event) {
   acceptFile(event.dataTransfer?.files?.[0]);
 }
 
-async function loadCourses() {
-  defaults.course = "";
-  courses.value = defaults.stage ? (await apiGet("/api/courses", { stage: defaults.stage })).courses || [] : [];
-}
-
 async function ensureLists() {
-  if (!stages.value.length) stages.value = (await apiGet("/api/stages")).stages || [];
-  if (defaults.stage) {
-    courses.value = (await apiGet("/api/courses", { stage: defaults.stage })).courses || [];
-  }
+  courses.value = (await apiGet("/api/courses")).courses || [];
 }
 
 async function parseFile() {

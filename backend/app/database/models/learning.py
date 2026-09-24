@@ -28,12 +28,18 @@ class PracticeRecord(IdMixin, CreatedAtMixin, Base):
     )
     selected_answer: Mapped[str | None] = mapped_column(String(16))
     answer_text: Mapped[str | None] = mapped_column(LONGTEXT)
+    answer_steps: Mapped[list | None] = mapped_column(JSON)
+    step_feedback: Mapped[dict | None] = mapped_column(JSON)
+    mastery_evidence: Mapped[str] = mapped_column(
+        ENUM("formal", "selfcheck", "transfer"), nullable=False, server_default=text("'formal'")
+    )
+    ai_evidence_json: Mapped[dict | None] = mapped_column(JSON)
     is_correct: Mapped[int | None] = mapped_column(TINYINT(1))
     score: Mapped[Decimal | None] = mapped_column(DECIMAL(5, 2))
     mistake_tags: Mapped[list | None] = mapped_column(JSON)
     time_spent_seconds: Mapped[int] = mapped_column(INTEGER(unsigned=True), nullable=False, server_default=text("0"))
     practice_mode: Mapped[str] = mapped_column(
-        ENUM("daily", "chapter", "mock", "wrong_book", "custom", "assessment", "assignment"),
+        ENUM("daily", "chapter", "mock", "wrong_book", "custom", "assessment", "assignment", "ai_similar"),
         nullable=False,
         server_default=text("'custom'"),
     )

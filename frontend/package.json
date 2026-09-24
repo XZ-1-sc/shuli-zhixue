@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "lint": "eslint src --ext .js,.vue",
+    "test:voice": "node --test tests/voice.test.js",
     "format": "prettier --write src",
     "format:check": "prettier --check src"
   },

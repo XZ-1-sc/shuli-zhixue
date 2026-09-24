@@ -78,6 +78,11 @@ class Assignment(IdMixin, TimestampMixin, Base):
     show_analysis_after_submit: Mapped[int] = mapped_column(TINYINT(1), nullable=False, server_default=text("1"))
     total_score: Mapped[Decimal] = mapped_column(DECIMAL(7, 2), nullable=False, server_default=text("'0.00'"))
     published_at: Mapped[datetime | None] = mapped_column(DATETIME)
+    ai_intent_json: Mapped[dict | None] = mapped_column(JSON)
+    review_report_json: Mapped[dict | None] = mapped_column(JSON)
+    lecture_draft: Mapped[str | None] = mapped_column(LONGTEXT)
+    teacher_adjustments_json: Mapped[dict | None] = mapped_column(JSON)
+    ai_generated: Mapped[int] = mapped_column(TINYINT(1), nullable=False, server_default=text("0"))
 
 
 class AssignmentQuestion(IdMixin, CreatedAtMixin, Base):

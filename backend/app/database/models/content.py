@@ -105,6 +105,10 @@ class Question(IdMixin, TimestampMixin, Base):
     version: Mapped[int] = mapped_column(INTEGER(unsigned=True), nullable=False, server_default=text("1"))
     published_at: Mapped[datetime | None] = mapped_column(DATETIME)
     deleted_at: Mapped[datetime | None] = mapped_column(DATETIME)
+    ai_generated: Mapped[int] = mapped_column(TINYINT(1), nullable=False, server_default=text("0"))
+    source_question_id: Mapped[int | None] = mapped_column(
+        BIGINT(unsigned=True), ForeignKey("questions.id", ondelete="SET NULL", onupdate="CASCADE")
+    )
     source_question_no: Mapped[str] = mapped_column(String(128), nullable=False)
     source_path: Mapped[str] = mapped_column(String(768), nullable=False)
     question_type: Mapped[str] = mapped_column(
@@ -129,6 +133,13 @@ class Question(IdMixin, TimestampMixin, Base):
     key_steps: Mapped[list] = mapped_column(JSON, nullable=False)
     common_errors: Mapped[list] = mapped_column(JSON, nullable=False)
     mistake_tags: Mapped[list] = mapped_column(JSON, nullable=False)
+    solution_steps: Mapped[list | None] = mapped_column(JSON)
+    steps_source: Mapped[str] = mapped_column(
+        ENUM("legacy", "ai", "teacher"), nullable=False, server_default=text("'legacy'")
+    )
+    steps_review_status: Mapped[str] = mapped_column(
+        ENUM("not_required", "pending", "verified", "needs_review"), nullable=False, server_default=text("'not_required'")
+    )
 
 
 class QuestionAttachment(IdMixin, CreatedAtMixin, Base):

@@ -271,6 +271,32 @@ async def upload_message_images(
     return {"files": uploaded, "max_files": MAX_FILES_PER_REQUEST}
 
 
+@router.post("/uploads/comment-images", status_code=status.HTTP_201_CREATED)
+async def upload_comment_images(
+    files: list[UploadFile] = File(...),
+    current: dict[str, Any] = Depends(current_session_user),
+) -> dict[str, Any]:
+    if current["role"] not in {"student", "teacher", "admin"}:
+        raise HTTPException(status_code=403, detail="当前账号不能上传评论图片。")
+    if not files or len(files) > MAX_FILES_PER_REQUEST:
+        raise HTTPException(status_code=422, detail=f"每次最多上传 {MAX_FILES_PER_REQUEST} 张图片。")
+    uploaded: list[dict[str, Any]] = []
+    for file in files:
+        raw = await file.read(settings.max_answer_image_bytes + 1)
+        original_name = file.filename or "评论图片"
+        await file.close()
+        if not raw:
+            raise HTTPException(status_code=422, detail="不能上传空图片。")
+        if len(raw) > settings.max_answer_image_bytes:
+            raise HTTPException(status_code=413, detail="单张图片不能超过 8 MB。")
+        normalized, extension, mime_type, width, height = _normalize_image(raw)
+        uploaded.append(_store_upload(
+            user_id=int(current["id"]), original_name=original_name, normalized=normalized,
+            extension=extension, mime_type=mime_type, width=width, height=height, folder="comments",
+        ))
+    return {"files": uploaded, "max_files": MAX_FILES_PER_REQUEST}
+
+
 @router.post("/uploads/note-files", status_code=status.HTTP_201_CREATED)
 async def upload_note_files(
     user_id: int = Form(ge=1),
@@ -404,6 +430,19 @@ async def read_uploaded_file(
                 ).first()
             )
     if not can_read:
+        with SessionLocal() as db:
+            can_read = bool(db.execute(text("""
+                SELECT 1 FROM question_comments qc
+                WHERE qc.status='active' AND qc.image_ids IS NOT NULL
+                  AND JSON_CONTAINS(qc.image_ids,:file_json,'$')
+                  AND (
+                    qc.user_id=:user_id
+                    OR EXISTS (SELECT 1 FROM practice_records pr WHERE pr.question_id=qc.question_id AND pr.user_id=:user_id)
+                    OR EXISTS (SELECT 1 FROM questions q WHERE q.id=qc.question_id AND q.created_by=:user_id)
+                  )
+                LIMIT 1
+            """), {"file_json": str(file_id), "user_id": int(current["id"])}).first())
+    if not can_read:
         raise HTTPException(status_code=403, detail="你没有权限查看这个文件。")
 
     root = _upload_root()
@@ -442,6 +481,11 @@ async def delete_unlinked_upload(
                     SELECT 1 FROM messages m
                     WHERE m.attachment_ids IS NOT NULL
                       AND JSON_CONTAINS(m.attachment_ids,:file_json,'$')
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM question_comments qc
+                    WHERE qc.image_ids IS NOT NULL
+                      AND JSON_CONTAINS(qc.image_ids,:file_json,'$')
                   )
                 LIMIT 1
                 """

@@ -12,7 +12,7 @@ from sqlalchemy import text
 from ..api.schemas import AISimilarPracticeRequest
 from ..database.repositories.diagnosis import _recent_records_sync
 from ..database.repositories.profile import _ability_map_sync
-from ..database.repositories.questions import _get_question_sync
+from ..database.repositories.questions import _get_question_sync, _random_questions_sync
 from ..database.session import SessionLocal
 from ..utils.llm_client import call_llm_json
 from .notification_service import _create_notification_once_sync, _preference_enabled_sync, _quiet_hours
@@ -30,7 +30,7 @@ class GeneratedPracticeQuestion(BaseModel):
 
 
 class GeneratedPracticeSet(BaseModel):
-    questions: list[GeneratedPracticeQuestion] = Field(min_length=1, max_length=2)
+    questions: list[GeneratedPracticeQuestion] = Field(min_length=1, max_length=3)
 
 
 class WeeklyDigest(BaseModel):
@@ -64,9 +64,15 @@ def _fallback_similar(question: dict[str, Any]) -> GeneratedPracticeQuestion:
 
 
 def generate_ai_similar_sync(user_id: int, payload: AISimilarPracticeRequest) -> dict[str, Any]:
-    question = _get_question_sync(payload.question_id)
+    question = _get_question_sync(payload.question_id) if payload.question_id else None
     if not question:
-        raise HTTPException(status_code=404, detail="题目不存在或当前账号无权访问。")
+        candidates = _random_questions_sync(
+            stage=None, course=payload.course, knowledge_tag=payload.knowledge_tag,
+            question_type=payload.question_type, limit=1,
+        )
+        question = candidates[0] if candidates else None
+    if not question:
+        raise HTTPException(status_code=404, detail="当前课程或知识点暂无可作为质量基准的题目。")
     fallback_item = _fallback_similar(question)
     fallback = GeneratedPracticeSet(questions=[fallback_item.model_copy() for _ in range(payload.count)])
     generated, usage = call_llm_json(
@@ -78,7 +84,7 @@ def generate_ai_similar_sync(user_id: int, payload: AISimilarPracticeRequest) ->
                     "题目必须可独立作答，选择题必须给齐 A-D 选项和正确选项；不得复制原题。"
                 ),
             },
-            {"role": "user", "content": json.dumps(question, ensure_ascii=False, default=str)[:24000]},
+            {"role": "user", "content": json.dumps({"source": question, "requested": payload.model_dump()}, ensure_ascii=False, default=str)[:24000]},
         ],
         GeneratedPracticeSet,
         fallback=fallback,
@@ -87,14 +93,21 @@ def generate_ai_similar_sync(user_id: int, payload: AISimilarPracticeRequest) ->
         max_tokens=2400,
     )
     items = []
+    fingerprints: set[str] = set()
     for item in generated.questions[: payload.count]:
         if item.question_type == "choice" and len(item.options) < 4:
             item = fallback_item.model_copy(deep=True)
+        fingerprint = "".join(item.question_text.split()).lower()
+        if not fingerprint or fingerprint in fingerprints or fingerprint == "".join(str(question.get("question_text") or "").split()).lower():
+            item = fallback_item.model_copy(deep=True)
+            item.question_text = f"变式 {len(items) + 1}：{item.question_text}"
+            fingerprint = "".join(item.question_text.split()).lower()
+        fingerprints.add(fingerprint)
         normalized = item.model_dump()
         normalized.update(
             {
                 "id": f"ai-{uuid.uuid4()}",
-                "source_question_id": payload.question_id,
+                "source_question_id": int(question["id"]),
                 "practice_mode": "ai_similar",
                 "disclaimer": "AI 生成，仅供参考；本次作答不计入诊断统计。",
             }
@@ -155,6 +168,13 @@ def create_practice_followup_sync(user_id: int, brief: dict[str, Any], signal: d
         return {"created": False, "reason": "disabled", "notification": None}
     if _quiet_hours():
         return {"created": False, "reason": "quiet_hours", "notification": None}
+    with SessionLocal() as db:
+        duplicate = db.execute(text("""
+            SELECT 1 FROM user_notifications
+            WHERE user_id=:user_id AND type='practice_followup' AND created_at>=CURRENT_DATE LIMIT 1
+        """), {"user_id": user_id}).first()
+    if duplicate:
+        return {"created": False, "reason": "already_created_today", "notification": None}
     fallback_sentence = str(
         signal.get("message")
         or brief.get("suggestion")

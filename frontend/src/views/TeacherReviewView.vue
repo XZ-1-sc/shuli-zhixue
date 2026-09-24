@@ -86,6 +86,15 @@
           <p><strong>标准答案：</strong>{{ selected.standard_answer }}</p>
           <ol><li v-for="step in selected.key_steps" :key="step">{{ step }}</li></ol>
           <p>{{ selected.analysis_text }}</p>
+          <button v-if="reviewStatus === 'pending'" class="teacher-pregrade-trigger" type="button" :disabled="pregradeLoading" @click="generatePregrade">{{ pregradeLoading ? "预批改中…" : "✦ AI 预批改" }}</button>
+        </section>
+
+        <section v-if="pregrade" class="teacher-pregrade-card">
+          <header><div><small>AI 预批改草稿 · 分数尚未生效</small><strong>参考分 {{ pregrade.suggested_score }} 分</strong></div><span>等待教师终审</span></header>
+          <p>{{ pregrade.reason }}</p>
+          <ul v-if="pregrade.issues?.length"><li v-for="(item, index) in pregrade.issues" :key="index">第 {{ item.step_no || index + 1 }} 步：{{ item.issue || item.message }}</li></ul>
+          <textarea v-model="gradeForm.feedback" rows="3" aria-label="预批改评语草稿"></textarea>
+          <footer><button type="button" :disabled="pregradeDeciding" @click="rejectPregrade">拒绝草稿</button><button class="teacher-primary-action" type="button" :disabled="pregradeDeciding" @click="acceptPregrade">{{ pregradeDeciding ? "处理中…" : "确认分数并完成批改" }}</button></footer>
         </section>
 
         <form class="teacher-grade-form" @submit.prevent="grade">
@@ -158,6 +167,9 @@ const grading = ref(false);
 const gradeError = ref("");
 const generatingComment = ref(false);
 const commentHint = ref("");
+const pregrade = ref(null);
+const pregradeLoading = ref(false);
+const pregradeDeciding = ref(false);
 const flags = ref({});
 const batchDrafts = ref({});
 const batchGenerating = ref(false);
@@ -180,6 +192,7 @@ function select(item) {
   gradeForm.correction_required = false;
   gradeError.value = "";
   commentHint.value = "";
+  pregrade.value = null;
 }
 
 async function batchGenerateComments() {
@@ -210,6 +223,36 @@ async function generateComment() {
   } catch (exception) {
     commentHint.value = exception.message;
   } finally { generatingComment.value = false; }
+}
+
+async function generatePregrade() {
+  if (!selected.value) return;
+  pregradeLoading.value = true; gradeError.value = "";
+  try {
+    pregrade.value = await apiPost(`/api/teacher/review/${selected.value.id}/ai-pregrade`, {});
+    gradeForm.score = pregrade.value.suggested_score;
+    gradeForm.feedback = pregrade.value.feedback_draft || pregrade.value.reason;
+    commentHint.value = "AI 只生成了参考草稿；点击“确认分数并完成批改”后才会落分。";
+  } catch (exception) { gradeError.value = exception.message || "AI 预批改失败。"; }
+  finally { pregradeLoading.value = false; }
+}
+
+async function acceptPregrade() {
+  if (!pregrade.value) return;
+  pregradeDeciding.value = true; gradeError.value = "";
+  try {
+    await apiPost(`/api/teacher/review/ai-pregrades/${pregrade.value.id}/decision`, { action: "accepted", score: Number(gradeForm.score), feedback: gradeForm.feedback, correction_required: gradeForm.correction_required });
+    await load();
+  } catch (exception) { gradeError.value = exception.message || "预批改确认失败。"; }
+  finally { pregradeDeciding.value = false; }
+}
+
+async function rejectPregrade() {
+  if (!pregrade.value) return;
+  pregradeDeciding.value = true; gradeError.value = "";
+  try { await apiPost(`/api/teacher/review/ai-pregrades/${pregrade.value.id}/decision`, { action: "rejected", correction_required: false }); pregrade.value = null; commentHint.value = "已拒绝 AI 草稿，可继续人工批改。"; }
+  catch (exception) { gradeError.value = exception.message || "预批改草稿处理失败。"; }
+  finally { pregradeDeciding.value = false; }
 }
 
 function appendComment(comment) {
@@ -265,4 +308,5 @@ onUnmounted(() => window.removeEventListener("keydown", handleKeydown));
 
 <style scoped>
 .teacher-feedback-label{display:flex;justify-content:space-between;gap:12px;align-items:center}.teacher-feedback-label button{min-height:30px;padding:0 10px;border:1px solid rgba(46, 125, 140, 0.35);border-radius:8px;color:#287381;background:rgba(46, 125, 140, 0.07);font-size:11px;font-weight:850}.teacher-ai-draft-hint{margin:0;color:#287381;font-size:11px}
+.teacher-pregrade-trigger{min-height:36px;padding:0 12px;color:#287381;border:1px solid rgba(46,125,140,.35);background:#edf6f5;font-weight:850}.teacher-pregrade-card{display:grid;gap:11px;padding:15px;border-left:3px solid #2e7d8c;background:#edf6f5}.teacher-pregrade-card>header,.teacher-pregrade-card>footer{display:flex;align-items:center;justify-content:space-between;gap:10px}.teacher-pregrade-card>header>div{display:grid;gap:4px}.teacher-pregrade-card small,.teacher-pregrade-card>header>span{color:#287381;font-size:11px}.teacher-pregrade-card p{margin:0;color:#49453f;line-height:1.65}.teacher-pregrade-card ul{margin:0;padding-left:18px;color:#75403b}.teacher-pregrade-card textarea{width:100%;padding:10px;resize:vertical;color:#33302b;border:1px solid #ded7cb;background:#fff}.teacher-pregrade-card footer button{min-height:36px;padding:0 12px;border:1px solid #ded7cb;background:#fff}.teacher-pregrade-card footer .teacher-primary-action{color:#fff;border-color:#2e7d8c;background:#2e7d8c}
 </style>

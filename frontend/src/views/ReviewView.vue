@@ -59,7 +59,7 @@
           </section>
           <RouterLink
             class="primary-button wide"
-            :to="`/practice?stage=${active.stage}&course=${active.course}&knowledge_tag=${active.knowledge_tag}&mode=wrong_book&limit=10`"
+            :to="`/practice?course=${active.course}&knowledge_tag=${active.knowledge_tag}&mode=wrong_book&limit=10`"
           >
             加入回炉练习
           </RouterLink>

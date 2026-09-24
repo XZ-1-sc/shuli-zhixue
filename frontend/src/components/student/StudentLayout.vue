@@ -9,7 +9,7 @@
         <RouterLink v-for="item in primaryNav" :key="item.to" :to="item.to">{{ item.label }}</RouterLink>
       </nav>
       <div class="student-account-area">
-        <span class="student-stage">{{ currentStage }}</span>
+        <span class="student-stage">{{ primaryCourse }}</span>
         <UserAccountButton />
       </div>
     </header>
@@ -40,15 +40,19 @@
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { onMounted, ref, watch } from "vue";
 import { RouterLink } from "vue-router";
 
 import { useUserStore } from "../../stores/user";
+import { apiGet } from "../../api/client";
 import UserAccountButton from "../UserAccountButton.vue";
 
 const user = useUserStore();
-const currentStage = computed(() => user.user?.current_stage || "大一");
+const primaryCourse = ref("我的课程");
 const moreOpen = ref(false);
+async function loadPrimaryCourse() { const data = await apiGet("/api/user-courses").catch(() => ({})); primaryCourse.value = data.primary_course || "我的课程"; }
+onMounted(loadPrimaryCourse);
+watch(() => user.userId, loadPrimaryCourse);
 
 const primaryNav = [
   { to: "/", label: "学习看板" },

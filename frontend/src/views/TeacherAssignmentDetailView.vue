@@ -31,6 +31,7 @@
         </article>
       </section>
       <AssignmentAnalytics scope="assignment" :scope-id="Number(route.params.assignmentId)" />
+      <AssignmentIntelligence :assignment-id="Number(route.params.assignmentId)" />
     </template>
   </section>
 </template>
@@ -41,6 +42,7 @@ import { RouterLink, useRoute, useRouter } from "vue-router";
 
 import { apiGet, apiPost } from "../api/client";
 import AssignmentAnalytics from "../components/teacher/AssignmentAnalytics.vue";
+import AssignmentIntelligence from "../components/teacher/AssignmentIntelligence.vue";
 import PageHeader from "../components/ui/PageHeader.vue";
 import { requestConfirmation } from "../services/confirm";
 
