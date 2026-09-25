@@ -1,6 +1,10 @@
-from fastapi import FastAPI
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from .api.routes.auth import router as auth_router
 from .api.routes.assessment import router as assessment_router
@@ -25,6 +29,29 @@ from .api.routes.teacher_review import router as teacher_review_router
 from .api.routes.teacher_students import router as teacher_students_router
 from .api.routes.teaching_intelligence import router as teaching_intelligence_router
 from .api.routes.uploads import router as uploads_router
+from .database.session import settings
+
+
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:8000", "http://127.0.0.1:8000",
+    "http://localhost:8080", "http://127.0.0.1:8080",
+    "http://localhost:5173", "http://127.0.0.1:5173", "null",
+]
+
+
+def _cors_origins() -> list[str]:
+    configured = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
+    return list(dict.fromkeys(DEFAULT_CORS_ORIGINS + configured))
+
+
+def _static_root() -> Path | None:
+    if not settings.static_dir.strip():
+        return None
+    root = Path(settings.static_dir).expanduser().resolve()
+    return root if (root / "index.html").is_file() else None
+
+
+STATIC_ROOT = _static_root()
 
 
 app = FastAPI(
@@ -37,15 +64,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:8000",
-        "http://127.0.0.1:8000",
-        "http://localhost:8080",
-        "http://127.0.0.1:8080",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "null",
-    ],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,9 +94,14 @@ app.include_router(teacher_ai_router)
 app.include_router(teacher_review_router)
 app.include_router(assignments_router)
 
+if STATIC_ROOT and (STATIC_ROOT / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=STATIC_ROOT / "assets"), name="frontend-assets")
+
 
 @app.get("/")
-async def root() -> dict[str, str]:
+async def root() -> Any:
+    if STATIC_ROOT:
+        return FileResponse(STATIC_ROOT / "index.html", headers={"Cache-Control": "no-cache"})
     return {"message": "数理智学 API 已启动", "docs": "/docs"}
 
 
@@ -214,3 +238,13 @@ async def offline_docs() -> HTMLResponse:
         </html>
         """
     )
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def frontend_fallback(full_path: str) -> FileResponse:
+    if not STATIC_ROOT or full_path.startswith(("api/", "docs", "openapi.json")):
+        raise HTTPException(status_code=404, detail="Not Found")
+    requested = (STATIC_ROOT / full_path).resolve()
+    if requested != STATIC_ROOT and STATIC_ROOT in requested.parents and requested.is_file():
+        return FileResponse(requested)
+    return FileResponse(STATIC_ROOT / "index.html", headers={"Cache-Control": "no-cache"})

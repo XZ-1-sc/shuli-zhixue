@@ -1,4 +1,9 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+
+from ...database.session import SessionLocal
+from ...storage import StorageError, get_storage
 
 
 router = APIRouter(prefix="/api", tags=["health"])
@@ -7,3 +12,15 @@ router = APIRouter(prefix="/api", tags=["health"])
 @router.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "domain": "math_brain"}
+
+
+@router.get("/ready")
+def ready() -> dict[str, str]:
+    try:
+        with SessionLocal() as db:
+            db.execute(text("SELECT 1"))
+        if not get_storage().is_configured():
+            raise StorageError("文件存储配置不完整。")
+    except (SQLAlchemyError, StorageError) as exc:
+        raise HTTPException(status_code=503, detail="依赖服务暂时不可用。") from exc
+    return {"status": "ready", "database": "ok", "storage": "ok"}

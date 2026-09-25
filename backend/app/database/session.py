@@ -1,5 +1,6 @@
 from collections.abc import Generator
 from pathlib import Path
+import ssl
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -22,6 +23,17 @@ class Settings(BaseSettings):
     teacher_invite_code: str = ""
     upload_dir: str = str(BACKEND_DIR / "uploads")
     max_answer_image_bytes: int = 8 * 1024 * 1024
+    storage_backend: str = "local"
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_bucket: str = "math-brain-uploads"
+    db_pool_size: int = 5
+    db_max_overflow: int = 5
+    db_pool_timeout: int = 30
+    db_pool_recycle: int = 300
+    db_ssl_ca_cert: str = ""
+    static_dir: str = ""
+    cors_origins: str = ""
 
     model_config = SettingsConfigDict(
         env_file=ENV_FILE,
@@ -47,11 +59,26 @@ def resolve_database_url(config: Settings) -> str:
 
 database_url = resolve_database_url(settings)
 
-engine = create_engine(
-    database_url,
-    pool_pre_ping=True,
-    pool_recycle=3600,
-)
+connect_args = {}
+if settings.db_ssl_ca_cert.strip():
+    ssl_context = ssl.create_default_context(cadata=settings.db_ssl_ca_cert)
+    ssl_context.check_hostname = True
+    ssl_context.verify_mode = ssl.CERT_REQUIRED
+    connect_args["ssl"] = ssl_context
+
+engine_options = {
+    "pool_pre_ping": True,
+    "pool_recycle": settings.db_pool_recycle,
+    "connect_args": connect_args,
+}
+if make_url(database_url).get_backend_name() != "sqlite":
+    engine_options.update(
+        pool_size=settings.db_pool_size,
+        max_overflow=settings.db_max_overflow,
+        pool_timeout=settings.db_pool_timeout,
+    )
+
+engine = create_engine(database_url, **engine_options)
 
 SessionLocal = sessionmaker(
     autocommit=False,
