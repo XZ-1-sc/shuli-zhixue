@@ -42,6 +42,7 @@ backend/aiven-ca.pem
 !backend/.env.example
 !backend/.env.docker.example
 !backend/cloud.env.example
+!backend/vercel.env.example
 !frontend/.env.development.example
 !frontend/.env.production.example
 
