@@ -14,7 +14,7 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "domain": "math_brain"}
 
 
-@router.get("/ready")
+@router.api_route("/ready", methods=["GET", "HEAD"])
 def ready() -> dict[str, str]:
     try:
         with SessionLocal() as db:
