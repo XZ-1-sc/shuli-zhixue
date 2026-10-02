@@ -19,8 +19,7 @@ def ready() -> dict[str, str]:
     try:
         with SessionLocal() as db:
             db.execute(text("SELECT 1"))
-        if not get_storage().is_configured():
-            raise StorageError("文件存储配置不完整。")
+        get_storage().check()
     except (SQLAlchemyError, StorageError) as exc:
         raise HTTPException(status_code=503, detail="依赖服务暂时不可用。") from exc
     return {"status": "ready", "database": "ok", "storage": "ok"}

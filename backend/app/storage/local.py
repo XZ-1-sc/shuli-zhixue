@@ -32,3 +32,7 @@ class LocalStorage(ObjectStorage):
 
     def is_configured(self) -> bool:
         return self.root.is_dir()
+
+    def check(self) -> None:
+        if not self.is_configured():
+            raise StorageError("本地文件存储不可用。")

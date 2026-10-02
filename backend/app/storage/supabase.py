@@ -15,6 +15,9 @@ class SupabaseStorage(ObjectStorage):
     def _object_url(self, key: str) -> str:
         return f"{self.url}/storage/v1/object/{quote(self.bucket, safe='')}/{quote(key.lstrip('/'), safe='/')}"
 
+    def _bucket_url(self) -> str:
+        return f"{self.url}/storage/v1/bucket/{quote(self.bucket, safe='')}"
+
     def _headers(self) -> dict[str, str]:
         return {"apikey": self.service_role_key, "Authorization": f"Bearer {self.service_role_key}"}
 
@@ -58,3 +61,11 @@ class SupabaseStorage(ObjectStorage):
 
     def is_configured(self) -> bool:
         return bool(self.url and self.service_role_key and self.bucket)
+
+    def check(self) -> None:
+        self._ensure_configured()
+        try:
+            response = self.client.get(self._bucket_url(), headers=self._headers())
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise StorageError("Supabase 文件存储暂时不可用。") from exc

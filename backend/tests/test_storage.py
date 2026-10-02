@@ -13,6 +13,7 @@ class StorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
             storage = LocalStorage("uploads", base_dir=root)
+            storage.check()
             storage.save("answers/test.txt", b"hello", "text/plain")
             self.assertEqual(storage.read("answers/test.txt"), b"hello")
             storage.delete("answers/test.txt")
@@ -32,7 +33,9 @@ class StorageTests(unittest.TestCase):
         storage.save("notes/test.txt", b"stored", "text/plain")
         self.assertEqual(storage.read("notes/test.txt"), b"stored")
         storage.delete("notes/test.txt")
-        self.assertEqual([request.method for request in requests], ["POST", "GET", "DELETE"])
+        storage.check()
+        self.assertEqual([request.method for request in requests], ["POST", "GET", "DELETE", "GET"])
+        self.assertTrue(requests[-1].url.path.endswith("/storage/v1/bucket/private-files"))
 
 
 if __name__ == "__main__":

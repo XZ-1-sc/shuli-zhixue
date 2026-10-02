@@ -21,3 +21,8 @@ class ObjectStorage(ABC):
     @abstractmethod
     def is_configured(self) -> bool:
         raise NotImplementedError
+
+    @abstractmethod
+    def check(self) -> None:
+        """Verify that the configured storage backend is reachable."""
+        raise NotImplementedError
