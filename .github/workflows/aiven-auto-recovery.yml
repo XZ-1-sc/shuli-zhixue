@@ -1,0 +1,25 @@
+name: Aiven MySQL auto recovery
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      AIVEN_PROJECT: ${{ vars.AIVEN_PROJECT }}
+      AIVEN_SERVICE: ${{ vars.AIVEN_SERVICE }}
+      AIVEN_API_TOKEN: ${{ secrets.AIVEN_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Recover powered-off Aiven MySQL service
+        run: python scripts/aiven_auto_recovery.py
