@@ -4,15 +4,17 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from PIL import Image, ImageOps, UnidentifiedImageError
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from ...database.session import BACKEND_DIR, SessionLocal, settings
+from ...database.session import SessionLocal, settings
 from ...security import current_session_user
+from ...storage import StorageError, get_storage
 
 
 router = APIRouter(prefix="/api", tags=["answer-uploads"])
@@ -38,13 +40,6 @@ NOTE_FILE_TYPES = {
 NOTE_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 ZIP_OFFICE_EXTENSIONS = {".docx", ".xlsx", ".pptx"}
 LEGACY_OFFICE_EXTENSIONS = {".doc", ".xls", ".ppt"}
-
-
-def _upload_root() -> Path:
-    configured = Path(settings.upload_dir).expanduser()
-    root = configured if configured.is_absolute() else BACKEND_DIR / configured
-    root.mkdir(parents=True, exist_ok=True)
-    return root.resolve()
 
 
 def _active_user_exists(user_id: int, role: str | None = None) -> bool:
@@ -105,9 +100,11 @@ def _store_upload(
     relative_dir = Path(folder) / f"{now:%Y}" / f"{now:%m}"
     filename = f"{uuid.uuid4().hex}{extension}"
     relative_path = relative_dir / filename
-    absolute_path = _upload_root() / relative_path
-    absolute_path.parent.mkdir(parents=True, exist_ok=True)
-    absolute_path.write_bytes(normalized)
+    storage_key = relative_path.as_posix()
+    try:
+        get_storage().save(storage_key, normalized, mime_type)
+    except StorageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     digest = hashlib.sha256(normalized).hexdigest()
 
     try:
@@ -128,7 +125,7 @@ def _store_upload(
                 {
                     "user_id": user_id,
                     "original_name": (original_name or "作答图片")[:255],
-                    "storage_key": relative_path.as_posix(),
+                    "storage_key": storage_key,
                     "mime_type": mime_type,
                     "size_bytes": len(normalized),
                     "sha256": digest,
@@ -139,7 +136,10 @@ def _store_upload(
             file_id = int(result.lastrowid)
             db.commit()
     except SQLAlchemyError as exc:
-        absolute_path.unlink(missing_ok=True)
+        try:
+            get_storage().delete(storage_key)
+        except StorageError:
+            pass
         raise HTTPException(status_code=503, detail="图片记录保存失败，请稍后重试。") from exc
 
     return {
@@ -347,7 +347,7 @@ async def upload_note_files(
 async def read_uploaded_file(
     file_id: int,
     current: dict[str, Any] = Depends(current_session_user),
-) -> FileResponse:
+) -> Response:
     with SessionLocal() as db:
         row = db.execute(
             text(
@@ -445,18 +445,21 @@ async def read_uploaded_file(
     if not can_read:
         raise HTTPException(status_code=403, detail="你没有权限查看这个文件。")
 
-    root = _upload_root()
-    path = (root / str(row["storage_key"])).resolve()
-    if root not in path.parents or not path.is_file():
-        raise HTTPException(status_code=404, detail="文件不存在。")
+    try:
+        content = get_storage().read(str(row["storage_key"]))
+    except StorageError as exc:
+        status_code = 404 if str(exc) == "文件不存在。" else 503
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
     mime_type = str(row["mime_type"])
     disposition = "inline" if mime_type.startswith("image/") or mime_type == "application/pdf" else "attachment"
-    return FileResponse(
-        path,
+    encoded_name = quote(str(row["original_name"]), safe="")
+    return Response(
+        content=content,
         media_type=mime_type,
-        filename=str(row["original_name"]),
-        content_disposition_type=disposition,
-        headers={"Cache-Control": "private, max-age=3600"},
+        headers={
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": f"{disposition}; filename=download; filename*=UTF-8''{encoded_name}",
+        },
     )
 
 
@@ -497,7 +500,8 @@ async def delete_unlinked_upload(
         db.execute(text("DELETE FROM uploaded_files WHERE id = :file_id"), {"file_id": file_id})
         db.commit()
 
-    path = (_upload_root() / str(row["storage_key"])).resolve()
-    if _upload_root() in path.parents:
-        path.unlink(missing_ok=True)
+    try:
+        get_storage().delete(str(row["storage_key"]))
+    except StorageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"deleted": True}

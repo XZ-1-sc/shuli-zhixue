@@ -37,9 +37,12 @@ garden-gpt-image-2/
 .env.*
 backend/.env
 backend/.env.*
+backend/aiven-ca.pem
 !*.env.example
 !backend/.env.example
 !backend/.env.docker.example
+!backend/cloud.env.example
+!backend/vercel.env.example
 !frontend/.env.development.example
 !frontend/.env.production.example
 

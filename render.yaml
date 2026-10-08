@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: math-smartbrain
+    runtime: docker
+    plan: free
+    dockerfilePath: ./docker/render/Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: STORAGE_BACKEND
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_BUCKET
+        value: math-brain-uploads
+      - key: DATABASE_URL
+        sync: false
+      - key: DB_SSL_CA_CERT
+        sync: false
+      - key: RUN_DB_MIGRATIONS
+        value: "0"
+      - key: DB_POOL_SIZE
+        value: "5"
+      - key: DB_MAX_OVERFLOW
+        value: "5"
+      - key: DB_POOL_TIMEOUT
+        value: "30"
+      - key: DB_POOL_RECYCLE
+        value: "300"

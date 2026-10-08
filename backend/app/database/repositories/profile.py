@@ -413,13 +413,16 @@ def _sync_note_attachments(
 def _remove_note_files(storage_keys: list[str]) -> None:
     if not storage_keys:
         return
-    from .uploads import _upload_root
+    from ...storage import StorageError, get_storage
 
-    root = _upload_root()
+    storage = get_storage()
     for storage_key in storage_keys:
-        path = (root / storage_key).resolve()
-        if root in path.parents:
-            path.unlink(missing_ok=True)
+        try:
+            storage.delete(storage_key)
+        except StorageError:
+            # The database mutation has already committed. A transient storage
+            # cleanup failure must not make a successful note update look failed.
+            continue
 
 def _create_note_sync(user_id: int, payload: NoteRequest) -> dict[str, Any]:
     if not payload.content.strip() and not payload.attachment_ids:
